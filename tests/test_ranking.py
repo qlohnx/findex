@@ -15,3 +15,16 @@ def test_ranking_and_snippet():
     assert result.doc_id == 1
     assert "**Rare**" in result.snippet
     assert search(index, "rare", BM25())[0].doc_id == 1
+
+
+def test_search_observes_index_changes():
+    index = make_index()
+    assert [r.doc_id for r in search("rare", index)] == [1]
+    index.add_document(3, "c.txt", ["rare"])
+    assert {r.doc_id for r in search("rare", index)} == {1, 3}
+
+
+def test_search_accepts_query_tree(tiny_index):
+    from findex.query import Term
+
+    assert {r.doc_id for r in search(Term("python"), tiny_index)} == {1, 3}

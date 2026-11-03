@@ -46,26 +46,43 @@ class Phrase(Query):
     values: tuple[str, ...] | str
 
     def __post_init__(self) -> None:
-        values = self.values if isinstance(self.values, tuple) else tuple(tokenize(self.values))
+        values = (
+            self.values
+            if isinstance(self.values, tuple)
+            else tuple(tokenize(self.values))
+        )
         object.__setattr__(self, "values", values)
 
     def evaluate(self, index: Index) -> set[int]:
-        if not self.values:
+        values = self.terms()
+        if not values:
             return set()
-        candidates = set(self.terms() and (p.doc_id for p in index.get_postings(self.values[0])))
+        if not index.positions:
+            raise ValueError("phrase queries require an index built with --positions")
+        candidates = {p.doc_id for p in index.get_postings(values[0])}
         for doc_id in candidates.copy():
-            positions = {p.doc_id: set(p.positions) for p in index.get_postings(self.values[0])}
+            positions = {
+                p.doc_id: set(p.positions) for p in index.get_postings(values[0])
+            }
             current = positions.get(doc_id, set())
-            for term in self.values[1:]:
-                posting = next((p for p in index.get_postings(term) if p.doc_id == doc_id), None)
-                if posting is None or not any(pos + 1 in posting.positions for pos in current):
+            for term in values[1:]:
+                posting = next(
+                    (p for p in index.get_postings(term) if p.doc_id == doc_id), None
+                )
+                if posting is None or not any(
+                    pos + 1 in posting.positions for pos in current
+                ):
                     candidates.discard(doc_id)
                     break
                 current = {pos + 1 for pos in current if pos + 1 in posting.positions}
         return candidates
 
     def terms(self) -> tuple[str, ...]:
-        return self.values
+        return (
+            tuple(tokenize(self.values))
+            if isinstance(self.values, str)
+            else self.values
+        )
 
 
 @dataclass(frozen=True)
@@ -103,12 +120,20 @@ class Not(Query):
         return self.child.terms()
 
 
-TOKEN_RE = re.compile(r'"[^"]*"|\(|\)|\S+')
+TOKEN_RE = re.compile(r'"[^"\n]*"|\(|\)|[^\s()"]+')
 
 
 class Parser:
     def __init__(self, text: str) -> None:
-        self.tokens = TOKEN_RE.findall(text)
+        self.tokens: list[str] = []
+        end = 0
+        for match in TOKEN_RE.finditer(text):
+            if text[end : match.start()].strip():
+                raise ValueError("invalid query syntax or unclosed quote")
+            self.tokens.append(match.group())
+            end = match.end()
+        if text[end:].strip():
+            raise ValueError("invalid query syntax or unclosed quote")
         self.pos = 0
 
     def peek(self) -> str | None:
@@ -132,7 +157,8 @@ class Parser:
     def or_expr(self) -> Query:
         result = self.and_expr()
         while (self.peek() or "").upper() == "OR":
-            self.take(); result = Or(result, self.and_expr())
+            self.take()
+            result = Or(result, self.and_expr())
         return result
 
     def and_expr(self) -> Query:
@@ -159,7 +185,13 @@ class Parser:
                 raise ValueError("missing closing parenthesis")
             return result
         if token.startswith('"'):
+            if not tuple(tokenize(token[1:-1])):
+                raise ValueError("phrase is empty")
             return Phrase(token[1:-1])
+        if token == ")" or token.upper() in {"AND", "OR", "NOT"}:
+            raise ValueError(f"unexpected token: {token}")
+        if not tuple(tokenize(token)):
+            raise ValueError(f"term contains no searchable tokens: {token}")
         return Term(token)
 
 

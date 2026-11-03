@@ -1,14 +1,22 @@
 import argparse
+import logging
 import time
 import timeit
 import tracemalloc
 from collections.abc import Callable
 from pathlib import Path
+from typing import Literal
 
-from findex.index import InvertedIndex, Posting
-from findex.ranking import BM25, SearchResult, TfIdf, search, timed  # noqa: F401
+from findex.index import Index, Posting
+from findex.ranking import BM25 as BM25
+from findex.ranking import SearchResult as SearchResult
+from findex.ranking import TfIdf as TfIdf
+from findex.ranking import search as search
+from findex.ranking import timed as timed
 from findex.store import load_index
 from findex.tokenize import tokenize
+
+log = logging.getLogger(__name__)
 
 
 def intersect_postings(p1: list[Posting], p2: list[Posting]) -> list[Posting]:
@@ -83,7 +91,7 @@ def difference_postings(p1: list[Posting], p2: list[Posting]) -> list[Posting]:
 class BooleanSearch:
     """Клас для виконання булевих запитів по оберненому індексу."""
 
-    def __init__(self, index: InvertedIndex) -> None:
+    def __init__(self, index: Index) -> None:
         self.index = index
 
     def search_and(self, term1: str, term2: str) -> list[Posting]:
@@ -169,18 +177,19 @@ def not_set(a: list[int], b: list[int]) -> list[int]:
     return sorted(set(a) - set(b))
 
 
-ENGINES: dict[str, dict[str, Callable[[list[int], list[int]], list[int]]]] = {
+type Engine = Literal["merge", "set"]
+ENGINES: dict[Engine, dict[str, Callable[[list[int], list[int]], list[int]]]] = {
     "merge": {"AND": and_ids, "OR": or_ids, "NOT": not_ids},
     "set": {"AND": and_set, "OR": or_set, "NOT": not_set},
 }
 OPERATORS = {"AND", "OR", "NOT"}
 
 
-def term_ids(index: InvertedIndex, term: str) -> list[int]:
+def term_ids(index: Index, term: str) -> list[int]:
     return [p.doc_id for p in index.get_postings(term)]
 
 
-def evaluate(index: InvertedIndex, query: str, engine: str = "merge") -> list[int]:
+def evaluate(index: Index, query: str, engine: Engine = "merge") -> list[int]:
     """Обчислює булевий запит зліва направо (без пріоритетів і дужок).
 
     ``a b`` = ``a AND b``; ``a OR b``; ``a NOT b`` = ``a AND NOT b``.
@@ -207,7 +216,7 @@ def evaluate(index: InvertedIndex, query: str, engine: str = "merge") -> list[in
     return result or []
 
 
-def benchmark(index: InvertedIndex, repeat: int = 20) -> None:
+def benchmark(index: Index, repeat: int = 20) -> None:
     """merge vs set на двох найчастіших і двох найрідших термінах."""
     by_df = sorted(index.index, key=lambda t: len(index.index[t]))
     rare, common = by_df[:2], by_df[-2:]
@@ -228,9 +237,13 @@ def benchmark(index: InvertedIndex, repeat: int = 20) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Boolean search over a saved index.")
     parser.add_argument("index_path", type=Path)
-    parser.add_argument("query", nargs="?", default="", help='напр. "python code NOT java"')
+    parser.add_argument(
+        "query", nargs="?", default="", help='напр. "python code NOT java"'
+    )
     parser.add_argument("--engine", choices=sorted(ENGINES), default="merge")
-    parser.add_argument("--limit", type=int, default=10, help="Скільки результатів показати")
+    parser.add_argument(
+        "--limit", type=int, default=10, help="Скільки результатів показати"
+    )
     parser.add_argument("--bench", action="store_true", help="merge vs set benchmark")
     args = parser.parse_args()
 
@@ -249,11 +262,11 @@ def main() -> None:
         for doc_id in ids[: args.limit]:
             meta = index.doc_meta[doc_id]
             print(f"  [{doc_id}] {meta.title or meta.path}")
-        print(f"Search time ({args.engine}): {search_s * 1000:.3f} ms")
+        log.debug("search time (%s): %.3f ms", args.engine, search_s * 1000)
 
     _, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
-    print(f"Load time: {load_s:.2f} s   Peak memory: {peak / 1024 / 1024:.1f} MB")
+    log.debug("load time: %.2f s; peak memory: %.1f MB", load_s, peak / 1024 / 1024)
 
 
 if __name__ == "__main__":

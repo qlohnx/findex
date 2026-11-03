@@ -8,25 +8,28 @@ import logging
 import math
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from operator import itemgetter
-from typing import Protocol
+from typing import Protocol, overload
 
 from findex.index import Index, Posting
 from findex.query import Query, parse
 
 log = logging.getLogger(__name__)
-_INDEXES: dict[int, Index] = {}
 
 
-def timed(fn):
+def timed[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
     @functools.wraps(fn)
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
         started = time.perf_counter()
         try:
             return fn(*args, **kwargs)
         finally:
-            log.info("%s took %.2f ms", fn.__name__, (time.perf_counter() - started) * 1000)
+            log.debug(
+                "%s took %.2f ms", fn.__name__, (time.perf_counter() - started) * 1000
+            )
+
     return wrapper
 
 
@@ -68,36 +71,53 @@ class SearchResult:
 
     def __str__(self) -> str:
         label = self.title or str(self.doc_id)
-        return f"{label} ({self.score:.4f})" + (f": {self.snippet}" if self.snippet else "")
-
-
-@functools.lru_cache(maxsize=256)
-def _cached_result_ids(query: str, index_id: int) -> frozenset[int]:
-    return frozenset(parse(query).evaluate(_INDEXES[index_id]))
+        return f"{label} ({self.score:.4f})" + (
+            f": {self.snippet}" if self.snippet else ""
+        )
 
 
 def _snippet(text: str, terms: set[str], width: int = 80) -> str:
     folded = text.casefold()
     starts = [folded.find(term) for term in terms if folded.find(term) >= 0]
     start = max(0, (min(starts) if starts else 0) - width)
-    result = text[start:start + 2 * width]
+    result = text[start : start + 2 * width]
     for term in sorted(terms, key=len, reverse=True):
-        result = re.sub(re.escape(term), lambda m: f"**{m.group(0)}**", result, flags=re.IGNORECASE)
+        result = re.sub(
+            re.escape(term), lambda m: f"**{m.group(0)}**", result, flags=re.IGNORECASE
+        )
     return result
 
 
+@overload
+def search(
+    query: str | Query, index: Index, scorer: Scorer | None = None, k: int = 10
+) -> list[SearchResult]: ...
+
+
+@overload
+def search(
+    query: Index, index: str | Query, scorer: Scorer | None = None, k: int = 10
+) -> list[SearchResult]: ...
+
+
 @timed
-def search(query: str | Query, index: Index, scorer: Scorer | None = None, k: int = 10) -> list[SearchResult]:
+def search(
+    query: str | Query | Index,
+    index: Index | str | Query,
+    scorer: Scorer | None = None,
+    k: int = 10,
+) -> list[SearchResult]:
     if isinstance(query, Index):
         query, index = index, query
+    if not isinstance(index, Index) or isinstance(query, Index):
+        raise TypeError("search requires a query and an Index")
+    if k < 0:
+        raise ValueError("k must be nonnegative")
     node = parse(query) if isinstance(query, str) else query
     scorer = scorer or BM25()
-    if isinstance(query, str):
-        _INDEXES[id(index)] = index
-        matched = set(_cached_result_ids(query, id(index)))
-        log.info("query cache: %s", _cached_result_ids.cache_info())
-    else:
-        matched = node.evaluate(index)
+    # Cache immutable query trees, never matches from a mutable index.
+    matched = node.evaluate(index)
+    log.debug("query cache: %s", parse.cache_info())
     scores: dict[int, float] = {doc_id: 0.0 for doc_id in matched}
     for term in node.terms():
         for posting in index.get_postings(term):
@@ -105,6 +125,12 @@ def search(query: str | Query, index: Index, scorer: Scorer | None = None, k: in
                 scores[posting.doc_id] += scorer(term, posting, index)
     top = heapq.nlargest(k, scores.items(), key=itemgetter(1))
     terms = set(node.terms())
-    return [SearchResult(doc_id, score, index.doc_meta[doc_id].title or index.doc_meta[doc_id].path,
-                         _snippet(index.doc_texts.get(doc_id, ""), terms) if index.doc_texts else "")
-            for doc_id, score in top]
+    return [
+        SearchResult(
+            doc_id,
+            score,
+            index.doc_meta[doc_id].title or index.doc_meta[doc_id].path,
+            _snippet(index.doc_texts.get(doc_id, ""), terms) if index.doc_texts else "",
+        )
+        for doc_id, score in top
+    ]

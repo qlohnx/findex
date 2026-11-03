@@ -1,6 +1,7 @@
 import argparse
 import functools
 import itertools
+import logging
 import time
 import tracemalloc
 from collections import Counter, defaultdict
@@ -8,6 +9,8 @@ from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Self
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,7 +42,11 @@ class Index(Mapping[str, list[Posting]]):
         self._closed = False
 
     def add_document(
-        self, doc_id: int, path: str, tokens: list[str], title: str = "",
+        self,
+        doc_id: int,
+        path: str,
+        tokens: list[str],
+        title: str = "",
         text: str | None = None,
     ) -> None:
         """Додає один документ до індексу.
@@ -47,6 +54,11 @@ class Index(Mapping[str, list[Posting]]):
         Постінги лишаються відсортованими за doc_id, якщо doc_id зростають
         (так і є при потоковій побудові).
         """
+        if doc_id in self.doc_meta:
+            raise ValueError(f"duplicate document id: {doc_id}")
+        if self.doc_meta and doc_id <= next(reversed(self.doc_meta)):
+            raise ValueError("document ids must increase to keep postings sorted")
+        self.__dict__.pop("avg_doc_length", None)
         self.doc_meta[doc_id] = DocMeta(path=path, title=title)
         self.doc_lengths[doc_id] = len(tokens)
         if text is not None:
@@ -128,6 +140,7 @@ def build_index(
         index.add_document(
             doc_id, f"{source}#{doc_id}", list(tokenize(text)), title=title, text=text
         )
+    log.info("indexed %d documents, %d terms", index.num_docs, len(index))
     return index
 
 
