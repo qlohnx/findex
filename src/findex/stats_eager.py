@@ -1,18 +1,28 @@
 import argparse
 import itertools
+import logging
 import time
 import tracemalloc
 from collections import Counter
 from pathlib import Path
+from typing import TypedDict
 
 from findex.stats import iter_documents
 from findex.tokenize import tokenize
 
+log = logging.getLogger(__name__)
 
-def collect_stats_eager(data_dir: Path, limit: int | None = None):
+
+class EagerStats(TypedDict):
+    doc_count: int
+    total_tokens: int
+    vocab_size: int
+
+
+def collect_stats_eager(data_dir: Path, limit: int | None = None) -> EagerStats:
     bz2_files = list(data_dir.glob("*.xml.bz2"))
     if not bz2_files:
-        print(f"Попередження: не знайдено .xml.bz2 файлів у папці {data_dir}")
+        log.warning("no .xml.bz2 files in %s", data_dir)
         return {"doc_count": 0, "total_tokens": 0, "vocab_size": 0}
 
     file_path = bz2_files[0]
@@ -29,7 +39,7 @@ def collect_stats_eager(data_dir: Path, limit: int | None = None):
     all_tokens_lists = [list(tokenize(text)) for text in all_docs]
 
     # 3. Рахуємо статистику
-    term_counts = Counter()
+    term_counts: Counter[str] = Counter()
     total_tokens = 0
     for tokens in all_tokens_lists:
         total_tokens += len(tokens)
@@ -42,7 +52,7 @@ def collect_stats_eager(data_dir: Path, limit: int | None = None):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Compute findex dataset statistics (Eager version)."
     )

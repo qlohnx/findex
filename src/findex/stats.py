@@ -1,28 +1,40 @@
 import argparse
 import bz2
 import itertools
+import logging
 import time
 import tracemalloc
 from collections import Counter
+from collections.abc import Iterator
 from pathlib import Path
+from typing import TypedDict
 from xml.etree import ElementTree
 
 from findex.tokenize import tokenize
 
+log = logging.getLogger(__name__)
 
-def collect_stats(data_dir: Path, limit: int | None = None):
+
+class CorpusStats(TypedDict):
+    doc_count: int
+    total_tokens: int
+    vocab_size: int
+    top_50: list[tuple[str, int]]
+
+
+def collect_stats(data_dir: Path, limit: int | None = None) -> CorpusStats:
     doc_count = 0
     total_tokens = 0
-    term_counts = Counter()
+    term_counts: Counter[str] = Counter()
 
     # Шукаємо наш bz2 файл у папці data/
     bz2_files = list(data_dir.glob("*.xml.bz2"))
     if not bz2_files:
-        print(f"Попередження: не знайдено .xml.bz2 файлів у папці {data_dir}")
+        log.warning("no .xml.bz2 files in %s", data_dir)
         return {"doc_count": 0, "total_tokens": 0, "vocab_size": 0, "top_50": []}
 
     file_path = bz2_files[0]
-    print(f"Знайдено файл для обробки: {file_path.name}")
+    log.info("processing %s", file_path.name)
 
     doc_generator = iter_documents(file_path)
 
@@ -32,14 +44,14 @@ def collect_stats(data_dir: Path, limit: int | None = None):
     for text in doc_generator:
         doc_count += 1
         if doc_count % 10 == 0:
-            print(f"Оброблено документів: {doc_count}...")
+            log.debug("processed %d documents", doc_count)
 
         # Перетворюємо генератор токенів на список для цієї статті
         tokens = list(tokenize(text))
         total_tokens += len(tokens)
         term_counts.update(tokens)
 
-    print(f"Всього успішно оброблено документів: {doc_count}")
+    log.info("processed %d documents", doc_count)
     vocab_size = len(term_counts)
     top_50 = term_counts.most_common(50)
 
@@ -51,7 +63,7 @@ def collect_stats(data_dir: Path, limit: int | None = None):
     }
 
 
-def iter_pages(file_path: Path):
+def iter_pages(file_path: Path) -> Iterator[tuple[str, str]]:
     """Генератор (title, text) для кожної статті з XML-bz2 файлу (потоково)."""
     with bz2.open(file_path, "rt", encoding="utf-8") as f:
         context = ElementTree.iterparse(f, events=("end",))
@@ -72,13 +84,13 @@ def iter_pages(file_path: Path):
                 elem.clear()
 
 
-def iter_documents(file_path: Path):
+def iter_documents(file_path: Path) -> Iterator[str]:
     """Генератор, який читає XML-bz2 файл на льоту і повертає текст кожної статті (<text>)."""
     for _, text in iter_pages(file_path):
         yield text
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Compute findex dataset statistics.")
     parser.add_argument("data_dir", type=Path, help="Path to the dataset directory")
     parser.add_argument(
