@@ -280,8 +280,8 @@ Five Hypothesis properties check:
 5. Query trees render and parse back to equal trees, including nested parentheses.
 
 Serialization properties and memory measurements are marked `slow`.
-Local validation on Python 3.14.7: **98 tests passed**, including **5 Hypothesis
-properties**; **79% coverage** across the whole package (856/1,081 statements),
+Local validation on Python 3.14.7: **107 tests passed**, including **5 Hypothesis
+properties**; **79% coverage** across the whole package (882/1,111 statements),
 **97%** for the CLI, and **100%** for the tokenizer and text-corpus intake.
 Strict pyright reports **0 errors**, and both Ruff checks pass.
 Coverage includes the whole package, including the older standalone experiment
@@ -290,6 +290,20 @@ printed benchmark reports; they are retained for reproducing earlier labs.
 The wheel smoke check separately exercises the installed command in fresh
 tool directories; it passed for help, indexing, statistics, and both scorers.
 The new CLI also successfully searched the existing Lab 03 `data/index.json`.
+
+The final audit added regression tests for overlapping snippet highlights,
+Windows `cp1251` output in the memory-study command, and inconsistent JSON
+indexes. JSON loading now rejects nonpositive term frequencies, duplicate or
+unsorted postings, mismatched document metadata, and invalid positions before
+statistics or ranking can consume them.
+
+| Requirement | Verification | Status |
+|---|---|---|
+| M1: full typing and strict pyright | All function signatures annotated; pyright: 0 errors; Ruff checks pass | Passed locally |
+| M2: at least 30 tests and 3 properties | 107 passing tests; 5 Hypothesis properties; fixtures, CLI tests, slow markers, and coverage report | Passed locally |
+| M3: installed CLI and wheel | Isolated source and wheel installs; index/search/stats; BM25/TF-IDF; JSON piping and logging | Passed locally |
+| M4: logging and release preparation | Logging configured in CLI; CI workflow and badge; local release tags | Prepared locally |
+| M4: published release | Green GitHub CI, uploaded wheel, and installation from its release URL | Pending approval to push and publish |
 
 ## M3 — Installed CLI and wheel
 
@@ -342,12 +356,11 @@ The badge reflects GitHub runs once this branch is pushed; local checks do not
 claim a green remote run.
 
 **Publication is pending owner approval.** No push or GitHub Release is part
-of the local validation. Once the reviewed changes have been committed, create
-the required local tags on that commit:
+of the local validation. The local tags `lab-04` and `v0.4.0` identify the same
+validated release commit. Inspect their commit IDs with:
 
 ```bash
-git tag lab-04
-git tag v0.4.0
+git rev-parse refs/tags/lab-04 refs/tags/v0.4.0
 ```
 
 After approval to push the branch and tags, the workflow publishes the tested
