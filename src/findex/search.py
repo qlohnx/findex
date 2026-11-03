@@ -1,4 +1,13 @@
+import argparse
+import time
+import timeit
+import tracemalloc
+from collections.abc import Callable
+from pathlib import Path
+
 from findex.index import InvertedIndex, Posting
+from findex.store import load_index
+from findex.tokenize import tokenize
 
 
 def intersect_postings(p1: list[Posting], p2: list[Posting]) -> list[Posting]:
@@ -91,3 +100,160 @@ class BooleanSearch:
         p1 = self.index.get_postings(term1)
         p2 = self.index.get_postings(term2)
         return difference_postings(p1, p2)
+
+
+# ---------------------------------------------------------------------------
+# Запити: розбір (зліва направо) та два рушії — merge і set
+# ---------------------------------------------------------------------------
+def and_ids(a: list[int], b: list[int]) -> list[int]:
+    i = j = 0
+    out: list[int] = []
+    while i < len(a) and j < len(b):
+        if a[i] == b[j]:
+            out.append(a[i])
+            i += 1
+            j += 1
+        elif a[i] < b[j]:
+            i += 1
+        else:
+            j += 1
+    return out
+
+
+def or_ids(a: list[int], b: list[int]) -> list[int]:
+    i = j = 0
+    out: list[int] = []
+    while i < len(a) and j < len(b):
+        if a[i] == b[j]:
+            out.append(a[i])
+            i += 1
+            j += 1
+        elif a[i] < b[j]:
+            out.append(a[i])
+            i += 1
+        else:
+            out.append(b[j])
+            j += 1
+    out.extend(a[i:])
+    out.extend(b[j:])
+    return out
+
+
+def not_ids(a: list[int], b: list[int]) -> list[int]:
+    """a AND NOT b."""
+    i = j = 0
+    out: list[int] = []
+    while i < len(a) and j < len(b):
+        if a[i] == b[j]:
+            i += 1
+            j += 1
+        elif a[i] < b[j]:
+            out.append(a[i])
+            i += 1
+        else:
+            j += 1
+    out.extend(a[i:])
+    return out
+
+
+def and_set(a: list[int], b: list[int]) -> list[int]:
+    return sorted(set(a) & set(b))
+
+
+def or_set(a: list[int], b: list[int]) -> list[int]:
+    return sorted(set(a) | set(b))
+
+
+def not_set(a: list[int], b: list[int]) -> list[int]:
+    return sorted(set(a) - set(b))
+
+
+ENGINES: dict[str, dict[str, Callable[[list[int], list[int]], list[int]]]] = {
+    "merge": {"AND": and_ids, "OR": or_ids, "NOT": not_ids},
+    "set": {"AND": and_set, "OR": or_set, "NOT": not_set},
+}
+OPERATORS = {"AND", "OR", "NOT"}
+
+
+def term_ids(index: InvertedIndex, term: str) -> list[int]:
+    return [p.doc_id for p in index.get_postings(term)]
+
+
+def evaluate(index: InvertedIndex, query: str, engine: str = "merge") -> list[int]:
+    """Обчислює булевий запит зліва направо (без пріоритетів і дужок).
+
+    ``a b`` = ``a AND b``; ``a OR b``; ``a NOT b`` = ``a AND NOT b``.
+    Операнди проходять той самий токенайзер, що й корпус (casefold тощо).
+    Запит, що починається з NOT, означає «усі документи, крім ...».
+    """
+    ops = ENGINES[engine]
+    result: list[int] | None = None
+    op = "AND"
+    for word in query.split():
+        if word.upper() in OPERATORS:
+            op = word.upper()
+            continue
+        for term in tokenize(word):
+            ids = term_ids(index, term)
+            if result is None:
+                if op == "NOT":
+                    result = ops["NOT"](sorted(index.doc_meta), ids)
+                else:
+                    result = ids
+            else:
+                result = ops[op](result, ids)
+            op = "AND"
+    return result or []
+
+
+def benchmark(index: InvertedIndex, repeat: int = 20) -> None:
+    """merge vs set на двох найчастіших і двох найрідших термінах."""
+    by_df = sorted(index.index, key=lambda t: len(index.index[t]))
+    rare, common = by_df[:2], by_df[-2:]
+    cases = [
+        ("common AND common", common[0], common[1]),
+        ("rare AND rare", rare[0], rare[1]),
+        ("common AND rare", common[1], rare[0]),
+    ]
+    print(f"{'case':<20}{'df':>16}{'merge, ms':>12}{'set, ms':>10}")
+    for name, t1, t2 in cases:
+        a, b = term_ids(index, t1), term_ids(index, t2)
+        t_merge = timeit.timeit(lambda: and_ids(a, b), number=repeat) / repeat
+        t_set = timeit.timeit(lambda: and_set(a, b), number=repeat) / repeat
+        df = f"{len(a)}/{len(b)}"
+        print(f"{name:<20}{df:>16}{t_merge * 1000:>12.3f}{t_set * 1000:>10.3f}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Boolean search over a saved index.")
+    parser.add_argument("index_path", type=Path)
+    parser.add_argument("query", nargs="?", default="", help='напр. "python code NOT java"')
+    parser.add_argument("--engine", choices=sorted(ENGINES), default="merge")
+    parser.add_argument("--limit", type=int, default=10, help="Скільки результатів показати")
+    parser.add_argument("--bench", action="store_true", help="merge vs set benchmark")
+    args = parser.parse_args()
+
+    tracemalloc.start()
+    t0 = time.perf_counter()
+    index = load_index(args.index_path)
+    load_s = time.perf_counter() - t0
+
+    if args.bench:
+        benchmark(index)
+    if args.query:
+        t0 = time.perf_counter()
+        ids = evaluate(index, args.query, engine=args.engine)
+        search_s = time.perf_counter() - t0
+        print(f"Знайдено документів: {len(ids)}")
+        for doc_id in ids[: args.limit]:
+            meta = index.doc_meta[doc_id]
+            print(f"  [{doc_id}] {meta.title or meta.path}")
+        print(f"Search time ({args.engine}): {search_s * 1000:.3f} ms")
+
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    print(f"Load time: {load_s:.2f} s   Peak memory: {peak / 1024 / 1024:.1f} MB")
+
+
+if __name__ == "__main__":
+    main()
