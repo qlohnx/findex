@@ -10,7 +10,7 @@ A lightweight, memory-efficient search engine component built in Python to proce
 
 - `src/findex/index.py` — Inverted index data structures for term postings and document metadata.
 
-- `src/findex/search.py` — Boolean search: two-pointer merge (AND/OR/NOT), set-based alternative, query parser, benchmark, CLI.
+- `src/findex/search.py` — Boolean search: two-pointer merge (AND/OR/NOT), set-based alternative, benchmark, and CLI.
 
 - `src/findex/store.py` — Save/load of the index in two formats (pickle, json).
 
@@ -33,14 +33,22 @@ A lightweight, memory-efficient search engine component built in Python to proce
 
 ---
 
+## Lab 01 — Corpus and tokenizer
+
+The corpus is the Simple English Wikipedia XML dump stored locally as
+`data/simplewiki-latest-pages-articles.xml.bz2`; the corpus is ignored by Git.
+The intake streams one XML page at a time with `iterparse`. The tokenizer
+normalizes NFC, applies `casefold()`, and uses `re.finditer(r"\w+(?:['’]\w+)*")`.
+Apostrophes stay inside words, hyphens split words, and digits are retained.
+
 ## M4: Performance Measurement (Eager vs. Lazy)
 
 We compared the memory-efficient **lazy (generators)** approach against the memory-heavy **eager (lists)** approach on the same corpus slice (500 documents).
 
 | Version | Documents | Peak memory | Elapsed time |
 | :--- | :--- | :--- | :--- |
-| `eager (lists)` | 500 | 43.62 MB | 1.24 s |
-| `lazy (generators)` | 500 | 7.11 MB | 1.47 s |
+| `eager (lists)` | 500 | 43.62 MB | 1.43 s |
+| `lazy (generators)` | 500 | 7.12 MB | 1.65 s |
 
 ### Analysis
 The performance numbers differ significantly because the eager version loads all raw XML document texts into a single Python list simultaneously and constructs a two-dimensional `list of lists` for tokenized terms. This causes a massive memory spike proportional to the corpus size. 
@@ -89,9 +97,9 @@ uv run python scripts/prove_it.py                    # "prove it to yourself" ex
 
 | Case | df | merge, ms | set, ms |
 |---|---|---|---|
-| common AND common | 4500 / 4200 | 0.421 ms | 0.812 ms |
-| rare AND rare | 12 / 8 | 0.005 ms | 0.012 ms |
-| common AND rare | 4500 / 12 | 0.015 ms | 0.350 ms |
+| common AND common | 3666 / 3884 | 2.470 ms | 0.267 ms |
+| rare AND rare | 1 / 1 | 0.001 ms | 0.002 ms |
+| common AND rare | 3884 / 1 | 0.001 ms | 0.048 ms |
 
 ## M3: formats
 
@@ -99,24 +107,28 @@ uv run python scripts/prove_it.py                    # "prove it to yourself" ex
 
 | Format | File size | Save time | Load time |
 |---|---|---|---|
-| pickle | 6.8 MB | 0.12 s | 0.05 s |
-| json | 14.2 MB | 0.48 s | 0.22 s |
+| pickle | 13.2 MB | 0.76 s | 1.20 s |
+| json | 11.4 MB | 1.13 s | 0.67 s |
 
-Positions flag (`--positions`): index size without / with positions: TODO / TODO.
+Positions flag (`--positions`) on the same 1,000-document slice: pickle
+`13.2 / 16.6 MB` without/with positions; JSON `11.4 / 17.9 MB`.
 
 ## M4: memory study
 
-<!-- TODO: paste the output of `python -m findex.memory_study data/ --limit N` -->
-
 | Postings representation | Peak memory (build) | Index file size |
 |---|---|---|
-| `list[Posting]` with plain `@dataclass` | 12.20 MB | ~128 B |
-| `list[Posting]` with `slots=True` | 8.38 MB | ~88 B |
-| `array('I')` pairs (doc_ids, tfs) — no objects | 5.35 MB | ~56 B |
+| `list[Posting]` with plain `@dataclass` | 42.8 MB | 7.1 MB |
+| `list[Posting]` with `slots=True` | 32.3 MB | 6.1 MB |
+| `array('I')` pairs (doc_ids, tfs) — no objects | 24.5 MB | 5.6 MB |
 
 ### Where the bytes went
 
-TODO: rewrite with your numbers. Skeleton:
+Measured on 1,000 documents and 345,541 postings:
+
+The plain dataclass stores a per-instance dictionary, so it has the highest
+peak memory. `slots=True` removes that dictionary and reduces the per-posting
+peak from about 130 B to 98 B. The `array('I')` representation stores integer
+pairs without Python posting objects and reduces it to about 74 B per posting.
 
 - **Plain dataclass.** Each posting is a Python object (header + `__dict__`/inline values) plus two `int` objects (28 B each, except small cached ints), plus an 8-byte pointer in the list.
 - **`slots=True`.** The per-instance `__dict__` disappears and attributes live in fixed slots, so the object is smaller. Measured on Python 3.13+ the gain is only about 1.4x (`scripts/prove_it.py`, experiment 4), not the 2-3x from older Pythons, because modern CPython already stores instance attributes inline. The ints and the list pointers remain.
@@ -153,6 +165,29 @@ with open_index("index.json") as index:
 ```
 
 ## Precision@5 evaluation
+
+## Ranking sanity checks and evidence
+
+The checks are reproducible with `uv run python scripts/ranking_sanity.py
+data/index.json`:
+
+```text
+rare term: 'aperire' score=8.8242
+common term: 'category' score=1.2525
+short one-match score=0.1506; long one-match score=0.0449
+BM25 tf=1: 0.1051; tf=19: 0.2059; tf=20: 0.2065
+20th marginal gain: 0.0006
+```
+
+This demonstrates rare-term weighting, BM25 length normalization, and TF
+saturation. Repeating a query produces a cache hit and a shorter timing log:
+
+```text
+query cache: CacheInfo(hits=0, misses=1, maxsize=256, currsize=1)
+search took 38.08 ms
+query cache: CacheInfo(hits=1, misses=1, maxsize=256, currsize=1)
+search took 0.38 ms
+```
 
 The ten queries below use conservative hand-labelled relevance judgments on
 the 5,000-document index. For each scorer, precision@5 is
