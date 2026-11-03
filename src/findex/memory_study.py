@@ -19,6 +19,7 @@ import gc
 import itertools
 import random
 import statistics
+import sys
 import tempfile
 import time
 import tracemalloc
@@ -221,6 +222,8 @@ def print_report(rows: list[Row]) -> None:
 
 
 def main() -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(
         description="M4: memory study of posting representations."
     )
