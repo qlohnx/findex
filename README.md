@@ -98,8 +98,6 @@ uv run python scripts/prove_it.py                    # "prove it to yourself" ex
 
 ## M2: merge vs set (AND)
 
-<!-- TODO: paste the output of `python -m findex.search index.bin --bench` on the real corpus -->
-
 | Case | df | merge, ms | set, ms |
 |---|---|---|---|
 | common AND common | 3666 / 3884 | 2.470 ms | 0.267 ms |
@@ -107,8 +105,6 @@ uv run python scripts/prove_it.py                    # "prove it to yourself" ex
 | common AND rare | 3884 / 1 | 0.001 ms | 0.048 ms |
 
 ## M3: formats
-
-<!-- TODO: paste the output of `python -m findex.format_study data/ --limit N` -->
 
 | Format | File size | Save time | Load time |
 |---|---|---|---|
