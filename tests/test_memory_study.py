@@ -1,3 +1,6 @@
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -44,3 +47,25 @@ def test_measure_runs_and_variants_agree():
     rows = [measure(label, cls, make_docs, loads=1) for label, cls in VARIANTS]
     assert rows[0].fingerprint == rows[1].fingerprint == rows[2].fingerprint
     assert all(r.peak_mb > 0 and r.file_mb > 0 for r in rows)
+
+
+@pytest.mark.slow
+def test_memory_study_output_handles_windows_encoding():
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "cp1251"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "findex.memory_study",
+            "--synthetic",
+            "2",
+            "--loads",
+            "1",
+        ],
+        env=env,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr.decode("cp1251", errors="replace")
+    assert "×" in result.stdout.decode("utf-8")

@@ -20,6 +20,7 @@ import itertools
 import logging
 import random
 import statistics
+import sys
 import tempfile
 import time
 import tracemalloc
@@ -273,6 +274,8 @@ def print_report(rows: list[Row]) -> None:
 
 
 def main() -> None:
+    if sys.__stdout__ is not None and sys.stdout is sys.__stdout__:
+        sys.__stdout__.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(
         description="M4: memory study of posting representations."
     )
