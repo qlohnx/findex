@@ -1,11 +1,13 @@
 import argparse
+import functools
 import itertools
 import time
 import tracemalloc
 from collections import Counter, defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Self
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,7 +27,7 @@ class DocMeta:
     title: str = ""
 
 
-class InvertedIndex:
+class Index(Mapping[str, list[Posting]]):
     """Обернений індекс для швидкого пошуку документів за термінами."""
 
     def __init__(self, positions: bool = False) -> None:
@@ -33,9 +35,12 @@ class InvertedIndex:
         self.index: dict[str, list[Posting]] = defaultdict(list)
         self.doc_meta: dict[int, DocMeta] = {}
         self.doc_lengths: dict[int, int] = {}
+        self.doc_texts: dict[int, str] = {}
+        self._closed = False
 
     def add_document(
-        self, doc_id: int, path: str, tokens: list[str], title: str = ""
+        self, doc_id: int, path: str, tokens: list[str], title: str = "",
+        text: str | None = None,
     ) -> None:
         """Додає один документ до індексу.
 
@@ -44,6 +49,8 @@ class InvertedIndex:
         """
         self.doc_meta[doc_id] = DocMeta(path=path, title=title)
         self.doc_lengths[doc_id] = len(tokens)
+        if text is not None:
+            self.doc_texts[doc_id] = text
 
         if self.positions:
             where: dict[str, list[int]] = defaultdict(list)
@@ -65,6 +72,48 @@ class InvertedIndex:
         """Повертає кількість унікальних слів в індексі."""
         return len(self.index)
 
+    def __contains__(self, term: object) -> bool:
+        return term in self.index
+
+    def __getitem__(self, term: str) -> list[Posting]:
+        if term not in self.index:
+            raise KeyError(term)
+        return self.index[term]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.index)
+
+    def __repr__(self) -> str:
+        return f"Index(terms={len(self):,}, docs={self.num_docs:,})"
+
+    @property
+    def num_docs(self) -> int:
+        return len(self.doc_lengths)
+
+    @functools.cached_property
+    def avg_doc_length(self) -> float:
+        return sum(self.doc_lengths.values()) / self.num_docs if self.num_docs else 0.0
+
+    def doc_length(self, doc_id: int) -> int:
+        return self.doc_lengths[doc_id]
+
+    def df(self, term: str) -> int:
+        return len(self.index.get(term, ()))
+
+    def close(self) -> None:
+        self._closed = True
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+        self.close()
+        return False
+
+
+class InvertedIndex(Index):
+    """Backward-compatible name retained from Lab 2."""
+
 
 def build_index(
     pages: Iterable[tuple[str, str]],
@@ -77,7 +126,7 @@ def build_index(
     index = InvertedIndex(positions=positions)
     for doc_id, (title, text) in enumerate(pages, start=1):
         index.add_document(
-            doc_id, f"{source}#{doc_id}", list(tokenize(text)), title=title
+            doc_id, f"{source}#{doc_id}", list(tokenize(text)), title=title, text=text
         )
     return index
 
