@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.13"
+          python-version: "3.14"
+          enable-cache: true
+      - run: uv sync --locked --dev
+      - run: uv run --locked ruff check .
+      - run: uv run --locked ruff format --check .
+      - run: uv run --locked pyright
+      - run: uv run --locked pytest --cov=findex --cov-report=term-missing --cov-report=xml
+      - run: uv build
+      - run: uv run --locked python scripts/check_wheel.py dist/findex-0.4.0-py3-none-any.whl
+      - uses: actions/upload-artifact@v4
+        with:
+          name: findex-${{ matrix.os }}
+          path: dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.os }}
+          path: coverage.xml
+
+  release:
+    if: github.ref == 'refs/tags/v0.4.0'
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: findex-ubuntu-latest
+          path: artifacts
+      - name: Publish tested distributions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create v0.4.0 artifacts/*.whl artifacts/*.tar.gz
+          --repo "${{ github.repository }}"
+          --title "findex v0.4.0"
+          --notes "Typed and tested CLI: BM25/TF-IDF, JSON Lines, logging, and installable distributions."
