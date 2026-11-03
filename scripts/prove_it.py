@@ -63,7 +63,7 @@ def exp3_hash_seed() -> None:
     cmd = [sys.executable, "-c", "print(hash('hello'))"]
     for env in ({}, {}, {"PYTHONHASHSEED": "0"}, {"PYTHONHASHSEED": "0"}):
         out = subprocess.run(cmd, capture_output=True, text=True, env=env or None, check=True)
-        print(f"   {str(env or 'random'):<28} {out.stdout.strip()}")
+        print(f"   {env or 'random'!s:<28} {out.stdout.strip()}")
 
 
 def exp4_slots() -> None:
