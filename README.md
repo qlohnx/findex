@@ -8,6 +8,8 @@ A lightweight, memory-efficient search engine component built in Python to proce
 
 - `src/findex/tokenize.py` — Custom generator-based tokenizer that handles multilingual text, lowercasing, punctuation, and contractions cleanly.
 
+- `src/findex/index.py` — Inverted index data structures for term postings and document metadata.
+
 - `src/findex/stats.py` — Lazy (streaming) corpus statistics collector using generators and `xml.etree.ElementTree.iterparse`.
 
 - `src/findex/stats_eager.py` — Eager corpus statistics collector that deliberately loads all documents into lists for performance comparison.
