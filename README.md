@@ -1,6 +1,25 @@
-# Findex — Memory-Efficient Search Engine (Lab-01, Lab-02, Lab-03)
+# Findex — Memory-Efficient Search Engine (Lab-01–Lab-04)
+
+[![CI](https://github.com/qlohnx/findex/actions/workflows/ci.yml/badge.svg?branch=lab-04)](https://github.com/qlohnx/findex/actions/workflows/ci.yml)
 
 A lightweight, memory-efficient search engine component built in Python to process large XML-based Wikipedia dumps with a minimal RAM footprint.
+
+Python **3.14+** is required, continuing the interpreter version used in Lab 03.
+Lab 04 provides an installable `findex` CLI; the earlier `python -m` commands
+and the Lab 01–03 results below are retained.
+
+```bash
+uv sync --locked --dev
+uv run findex --help
+uv run findex index data/ --out data/lab04-index.json --positions --limit 5000
+uv run findex search data/lab04-index.json 'python AND (async OR await) NOT java' --k 5
+uv run findex search data/lab04-index.json python --scorer tfidf --json
+uv run findex stats data/lab04-index.json
+```
+
+The corpus can be a `.txt` file, a directory of text files, a `.xml.bz2`
+Wikipedia dump, or a directory of dumps. Phrase queries require `--positions`.
+Use double quotes around the whole query in PowerShell when convenient.
 
 ---
 
@@ -161,7 +180,7 @@ from findex.ranking import BM25, search
 from findex.store import open_index
 
 with open_index("index.json") as index:
-    for result in search('python AND (async OR await) NOT java', index, BM25(), k=5):
+    for result in search("python AND (async OR await) NOT java", index, BM25(), k=5):
         print(result)
 ```
 
@@ -210,3 +229,154 @@ uv run python scripts/evaluate.py data/index.json
 | `"linear algebra"` | 286 | 0.20 | 0.20 |
 | `"computer program"` | 941 | 0.20 | 0.20 |
 | `python` | 1490, 1499, 1504, 2623, 3111 | 1.00 | 0.60 |
+
+---
+
+# Lab 04 — Typing, Testing, Packaging, and CLI
+
+This lab extends the existing tokenizer, streaming corpus intake, inverted
+index, Boolean parser, TF-IDF, and BM25. `src/findex/cli.py` is a presentation
+layer over those modules.
+
+## M1 — Types
+
+All public functions and methods under `src/findex` have annotations.
+`uv run pyright` checks the entire package in **strict** mode. `Scorer` is a
+structural `Protocol`: `BM25` and `TfIdf` satisfy its callable signature without
+inheriting it. `Iterable` accepts streaming input; generators return `Iterator`
+(context managers use `Generator`). `@timed` uses PEP 695 `**P, R` generics to
+preserve argument and return types. Engine and scorer options use `Literal`;
+statistics and JSON result rows use `TypedDict`.
+
+There are no `# type: ignore` suppressions. The single `cast` in JSON loading
+documents the stdlib's untyped boundary; each field is validated before entering
+the typed index. The memory-study variants retain their original plain/slotted/
+array representations in separately typed storage.
+
+## M2 — Tests and coverage
+
+```bash
+uv run --locked pytest --cov=findex --cov-report=term-missing --durations=10
+uv run --locked pytest -m "not slow"
+uv run --locked ruff check .
+uv run --locked ruff format --check .
+uv run --locked pyright
+```
+
+`tests/conftest.py` supplies a tiny multilingual corpus, a fresh positional
+index per test, text files, and a compressed XML fixture. Tests require no
+downloaded corpus or network. Existing Lab 01–03 tests remain part of the suite.
+Unicode tokenizer examples are parametrized. Ranking checks cover rare-term
+weighting for both scorers, BM25 length normalization and saturation, and
+TF-IDF's diminishing TF weight. `CliRunner` tests help, indexing, both scorers,
+statistics, JSON Lines, logging levels, and expected errors.
+
+Five Hypothesis properties check:
+
+1. Tokens are never empty, including arbitrary Unicode input.
+2. Tokenization is idempotent after joining its tokens.
+3. AND/OR/NOT merges of sorted unique document IDs agree with Python sets.
+4. JSON/pickle round trips preserve postings, positions, metadata, lengths, and text.
+5. Query trees render and parse back to equal trees, including nested parentheses.
+
+Serialization properties and memory measurements are marked `slow`.
+Local validation on Python 3.14.7: **98 tests passed**, including **5 Hypothesis
+properties**; **79% coverage** across the whole package (856/1,081 statements),
+**97%** for the CLI, and **100%** for the tokenizer and text-corpus intake.
+Strict pyright reports **0 errors**, and both Ruff checks pass.
+Coverage includes the whole package, including the older standalone experiment
+commands. Uncovered paths mainly belong to their `argparse` entry points and
+printed benchmark reports; they are retained for reproducing earlier labs.
+The wheel smoke check separately exercises the installed command in fresh
+tool directories; it passed for help, indexing, statistics, and both scorers.
+The new CLI also successfully searched the existing Lab 03 `data/index.json`.
+
+## M3 — Installed CLI and wheel
+
+```bash
+# Install the current source as a command:
+uv tool install .
+findex --help
+
+# Build both wheel and source distribution, then install the wheel:
+uv build
+uv tool install dist/findex-0.4.0-py3-none-any.whl
+
+# Verify an isolated wheel install outside the repository:
+uv run python scripts/check_wheel.py dist/findex-0.4.0-py3-none-any.whl
+```
+
+The smoke script uses temporary `UV_TOOL_DIR` and `UV_TOOL_BIN_DIR`, removes
+`PYTHONPATH`, and runs help, indexing, statistics, and both scorers from outside
+the repository. It does not change the user's installed tools or PATH.
+`[project.scripts]` creates the `findex` executable; `py.typed` ships in the
+wheel. Pytest has no `pythonpath = ["src"]` workaround: `uv sync` installs the
+package before tests run. `uv.lock` fixes dependency versions for reproducibility.
+
+```bash
+findex index corpus/ --out index.json --positions --limit 100
+findex search index.json '"search engine" OR python' --k 10 --scorer bm25
+findex -v search index.json python --json
+findex -vv search index.json python --json
+findex stats index.json
+```
+
+Rich renders result tables, highlighted snippets, statistics, and a progress bar
+when indexing in a terminal. `--json` emits one object per line to stdout;
+no matches emit no lines. Each object has `doc_id`, `score`, `title`, and
+`snippet` (using the Lab 03 `**highlight**` markers).
+
+## M4 — Logging, CI, and release
+
+CLI output goes to stdout; progress and diagnostics go to stderr.
+`-v` enables INFO; `-vv` enables DEBUG, including `@timed` and parser cache
+statistics. Library modules use named loggers and lazy `%` formatting; only
+the CLI configures handlers. Missing files, malformed indexes, invalid query
+syntax, and phrase queries without positions produce a one-line error and a
+nonzero exit code. Typer validates CLI options before running commands.
+
+`.github/workflows/ci.yml` checks lint, formatting, strict types, tests with
+coverage, package builds, and isolated wheel installation on Ubuntu and Windows
+using Python 3.14. Distribution artifacts and coverage XML are uploaded by CI.
+The badge reflects GitHub runs once this branch is pushed; local checks do not
+claim a green remote run.
+
+**Publication is pending owner approval.** No push or GitHub Release is part
+of the local validation. Once the reviewed changes have been committed, create
+the required local tags on that commit:
+
+```bash
+git tag lab-04
+git tag v0.4.0
+```
+
+After approval to push the branch and tags, the workflow publishes the tested
+wheel and source archive as a `v0.4.0` GitHub Release when that version tag is
+pushed. The tag must reference the same reviewed commit as `lab-04`.
+After publication, verify the release download from another environment:
+
+```bash
+uv tool install https://github.com/qlohnx/findex/releases/download/v0.4.0/findex-0.4.0-py3-none-any.whl
+findex --help
+```
+
+## Reflection
+
+1. CPython stores annotations; pyright checks them before execution, IDEs use
+   them for navigation and completion, and Typer reads them to generate the CLI.
+2. Narrowing: after `if value is None: return ""`, a `str | None` value is a
+   `str`, so calling `value.upper()` is safe.
+3. Accept `Iterable[T]` to allow lists and streams; return `Iterator[T]` when
+   callers may use `next()`.
+4. A Protocol describes required methods. Matching `__call__` parameter and
+   return types makes a scorer compatible without explicit inheritance.
+5. Session fixtures are shared for the entire run. Mutating a shared index
+   changes later tests; the mutable index fixture here has function scope.
+6. Merge/set agreement is a property over arbitrary document-ID sets.
+   Hypothesis shrinks failures to a small counterexample that is easy to debug.
+7. The `src/` layout prevents accidental imports directly from the repository
+   root from hiding a broken installation.
+8. An entry point creates an executable wrapper (`findex.exe` on Windows)
+   that imports and calls `findex.cli:app`.
+9. Logging with `%` arguments defers message formatting until the selected
+   level is enabled; an f-string is formatted before calling the logger.
