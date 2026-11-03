@@ -1,7 +1,8 @@
 from pathlib import Path
+
 from findex.index import InvertedIndex, Posting
-from findex.store import save_index, load_index
 from findex.search import BooleanSearch
+from findex.store import load_index, save_index
 
 
 def test_index_save_and_load(tmp_path: Path):
