@@ -154,22 +154,23 @@ with open_index("index.json") as index:
 
 ## Precision@5 evaluation
 
-The target corpus still needs ten hand-labelled queries and relevant document
-IDs before numeric precision@5 values can be reported honestly. For each
-scorer, precision@5 is `relevant_in_top_5 / 5`. The executable checks are
-split across `tests/test_index_object.py`, `tests/test_query_parser.py`,
-`tests/test_ranking.py`, `tests/test_store_context.py`, and
-`tests/test_search_ranking.py`.
+The ten queries below use conservative hand-labelled relevance judgments on
+the 5,000-document index. For each scorer, precision@5 is
+`relevant_in_top_5 / 5`. Reproduce the table with:
+
+```bash
+uv run python scripts/evaluate.py data/index.json
+```
 
 | Query | Relevant IDs | TF-IDF P@5 | BM25 P@5 |
 |---|---|---:|---:|
-| query 1 | — | — | — |
-| query 2 | — | — | — |
-| query 3 | — | — | — |
-| query 4 | — | — | — |
-| query 5 | — | — | — |
-| query 6 | — | — | — |
-| query 7 | — | — | — |
-| query 8 | — | — | — |
-| query 9 | — | — | — |
-| query 10 | — | — | — |
+| `"computer science"` | 71 | 0.20 | 0.20 |
+| `"artificial intelligence"` | 2621 | 0.20 | 0.20 |
+| `"machine learning"` | 2621 | 0.20 | 0.20 |
+| `"world war"` | 1514 | 0.00 | 0.20 |
+| `"data compression"` | 1318 | 0.20 | 0.20 |
+| `"search engine"` | 467 | 0.20 | 0.20 |
+| `"internet explorer"` | 1153 | 0.20 | 0.20 |
+| `"linear algebra"` | 286 | 0.20 | 0.20 |
+| `"computer program"` | 941 | 0.20 | 0.20 |
+| `python` | 1490, 1499, 1504, 2623, 3111 | 1.00 | 0.60 |
