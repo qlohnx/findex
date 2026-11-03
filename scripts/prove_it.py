@@ -1,6 +1,6 @@
 """Lab 02 «Prove it to yourself»: п'ять експериментів з теорії.
 
-    uv run python scripts/prove_it.py
+uv run python scripts/prove_it.py
 """
 
 import subprocess
@@ -62,7 +62,9 @@ def exp3_hash_seed() -> None:
     print("3) hash('hello') у двох процесах / з PYTHONHASHSEED=0:")
     cmd = [sys.executable, "-c", "print(hash('hello'))"]
     for env in ({}, {}, {"PYTHONHASHSEED": "0"}, {"PYTHONHASHSEED": "0"}):
-        out = subprocess.run(cmd, capture_output=True, text=True, env=env or None, check=True)
+        out = subprocess.run(
+            cmd, capture_output=True, text=True, env=env or None, check=True
+        )
         print(f"   {env or 'random'!s:<28} {out.stdout.strip()}")
 
 
@@ -99,9 +101,13 @@ def exp5_array() -> None:
     a = array("I", range(n))
     lst = list(range(n))
     print(f"   getsizeof(array) = {sys.getsizeof(a) / 1e6:.1f} MB")
-    print(f"   getsizeof(list)  = {sys.getsizeof(lst) / 1e6:.1f} MB  (лише масив вказівників)")
+    print(
+        f"   getsizeof(list)  = {sys.getsizeof(lst) / 1e6:.1f} MB  (лише масив вказівників)"
+    )
     ints = sum(sys.getsizeof(x) for x in lst)
-    print(f"   + самі int-об'єкти: {ints / 1e6:.1f} MB -> разом {(sys.getsizeof(lst) + ints) / 1e6:.1f} MB")
+    print(
+        f"   + самі int-об'єкти: {ints / 1e6:.1f} MB -> разом {(sys.getsizeof(lst) + ints) / 1e6:.1f} MB"
+    )
 
 
 if __name__ == "__main__":
