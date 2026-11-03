@@ -1,4 +1,4 @@
-# Findex — Memory-Efficient Search Engine (Lab-01, Lab-02)
+# Findex — Memory-Efficient Search Engine (Lab-01, Lab-02, Lab-03)
 
 A lightweight, memory-efficient search engine component built in Python to process large XML-based Wikipedia dumps with a minimal RAM footprint.
 
@@ -20,7 +20,8 @@ A lightweight, memory-efficient search engine component built in Python to proce
 
 - `src/findex/stats_eager.py` — Eager corpus statistics collector that deliberately loads all documents into lists for performance comparison.
 
----
+- `src/findex/query.py` — recursive-descent parser and composable query tree.
+- `src/findex/ranking.py` — TF-IDF, BM25, timed search, caching, results, and snippets.
 
 ## Definition of Done Verification
 
@@ -53,6 +54,7 @@ In contrast, the lazy (streaming) version processes documents one by one using `
 ### Running Statistics (Lazy)
 ```bash
 uv run python -m findex.stats data/ --limit 500
+```
 
 ---
 
@@ -120,3 +122,54 @@ TODO: rewrite with your numbers. Skeleton:
 - **`slots=True`.** The per-instance `__dict__` disappears and attributes live in fixed slots, so the object is smaller. Measured on Python 3.13+ the gain is only about 1.4x (`scripts/prove_it.py`, experiment 4), not the 2-3x from older Pythons, because modern CPython already stores instance attributes inline. The ints and the list pointers remain.
 - **`array('I')`.** No objects at all: 4 B per `doc_id` plus 4 B per `tf` in two contiguous buffers (8 B per posting). The remaining memory is the dict of terms, the term strings and the 2 arrays per term.
 - Note: `Posting` also carries the `positions` field (one extra pointer to the shared empty tuple), which `PlainPosting` in `memory_study.py` does not have.
+
+---
+
+# Lab 03 — Ranking and the Object Model
+
+Lab 03 adds a Pythonic `Index` object, ranked retrieval, and a recursive query
+language while preserving the Lab 02 API.
+
+- `Index` implements `Mapping`: `len`, `in`, `[]`, iteration, `repr`,
+  `num_docs`, cached `avg_doc_length`, `doc_length`, and `df`.
+- `open_index()` is a context manager that closes the loaded index on every
+  exit path.
+- `TfIdf` and `BM25` share the callable `Scorer` protocol. Results are ranked
+  with `heapq.nlargest` and returned as orderable `SearchResult` objects.
+- `parse()` builds `Term`, `Phrase`, `And`, `Or`, and `Not` trees. Query nodes
+  overload `&`, `|`, and `~`; phrases use positional postings.
+- `@timed` uses `functools.wraps`, while `parse()` uses an
+  `@lru_cache(maxsize=256)` cache. `parse.cache_info()` exposes cache hits.
+- Search results include an ±80-character snippet with matching terms wrapped
+  in `**highlight**` markers.
+
+```python
+from findex.ranking import BM25, search
+from findex.store import open_index
+
+with open_index("index.json") as index:
+    for result in search('python AND (async OR await) NOT java', index, BM25(), k=5):
+        print(result)
+```
+
+## Precision@5 evaluation
+
+The target corpus still needs ten hand-labelled queries and relevant document
+IDs before numeric precision@5 values can be reported honestly. For each
+scorer, precision@5 is `relevant_in_top_5 / 5`. The executable checks are
+split across `tests/test_index_object.py`, `tests/test_query_parser.py`,
+`tests/test_ranking.py`, `tests/test_store_context.py`, and
+`tests/test_search_ranking.py`.
+
+| Query | Relevant IDs | TF-IDF P@5 | BM25 P@5 |
+|---|---|---:|---:|
+| query 1 | — | — | — |
+| query 2 | — | — | — |
+| query 3 | — | — | — |
+| query 4 | — | — | — |
+| query 5 | — | — | — |
+| query 6 | — | — | — |
+| query 7 | — | — | — |
+| query 8 | — | — | — |
+| query 9 | — | — | — |
+| query 10 | — | — | — |
