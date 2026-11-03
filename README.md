@@ -302,8 +302,8 @@ statistics or ranking can consume them.
 | M1: full typing and strict pyright | All function signatures annotated; pyright: 0 errors; Ruff checks pass | Passed locally |
 | M2: at least 30 tests and 3 properties | 107 passing tests; 5 Hypothesis properties; fixtures, CLI tests, slow markers, and coverage report | Passed locally |
 | M3: installed CLI and wheel | Isolated source and wheel installs; index/search/stats; BM25/TF-IDF; JSON piping and logging | Passed locally |
-| M4: logging and release preparation | Logging configured in CLI; CI workflow and badge; local release tags | Prepared locally |
-| M4: published release | Green GitHub CI, uploaded wheel, and installation from its release URL | Pending approval to push and publish |
+| M4: logging, CI, and tags | Logging configured in CLI; CI passed on Ubuntu and Windows; release tags pushed | Passed |
+| M4: published release | Wheel and source archive attached to v0.4.0; public URL installation and help verified in a fresh tool environment | Passed |
 
 ## M3 — Installed CLI and wheel
 
@@ -352,21 +352,25 @@ nonzero exit code. Typer validates CLI options before running commands.
 `.github/workflows/ci.yml` checks lint, formatting, strict types, tests with
 coverage, package builds, and isolated wheel installation on Ubuntu and Windows
 using Python 3.14. Distribution artifacts and coverage XML are uploaded by CI.
-The badge reflects GitHub runs once this branch is pushed; local checks do not
-claim a green remote run.
+The release commit passed [CI on Ubuntu and Windows](https://github.com/qlohnx/findex/actions/runs/41700115674).
+The badge tracks the latest GitHub run for `lab-04`.
 
-**Publication is pending owner approval.** No push or GitHub Release is part
-of the local validation. The local tags `lab-04` and `v0.4.0` identify the same
-validated release commit. Inspect their commit IDs with:
+**Published:** [findex v0.4.0](https://github.com/qlohnx/findex/releases/tag/v0.4.0)
+contains the wheel and source archive. The public wheel's SHA-256 was checked
+against the local artifact, and installation from its release URL followed by
+`findex --help` passed in a fresh tool environment outside the repository.
+The release was published through the GitHub API after both CI jobs passed;
+the tag-conditioned release job was skipped in the initial push.
+
+The pushed tags `lab-04` and `v0.4.0` identify the same validated release commit.
+Later documentation commits on `lab-04` leave those release tags in place.
+Inspect their commit IDs with:
 
 ```bash
 git rev-parse refs/tags/lab-04 refs/tags/v0.4.0
 ```
 
-After approval to push the branch and tags, the workflow publishes the tested
-wheel and source archive as a `v0.4.0` GitHub Release when that version tag is
-pushed. The tag must reference the same reviewed commit as `lab-04`.
-After publication, verify the release download from another environment:
+Install the published release in another environment:
 
 ```bash
 uv tool install https://github.com/qlohnx/findex/releases/download/v0.4.0/findex-0.4.0-py3-none-any.whl
