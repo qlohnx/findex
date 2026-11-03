@@ -8,6 +8,8 @@ A lightweight, memory-efficient search engine component built in Python to proce
 
 - `src/findex/tokenize.py` — Custom generator-based tokenizer that handles multilingual text, lowercasing, punctuation, and contractions cleanly.
 
+- `src/findex/corpus.py` — Lazy `.txt` document iterator for the Lab 1 corpus intake.
+
 - `src/findex/index.py` — Inverted index data structures for term postings and document metadata.
 
 - `src/findex/search.py` — Boolean search: two-pointer merge (AND/OR/NOT), set-based alternative, benchmark, and CLI.
@@ -37,6 +39,9 @@ A lightweight, memory-efficient search engine component built in Python to proce
 
 The corpus is the Simple English Wikipedia XML dump stored locally as
 `data/simplewiki-latest-pages-articles.xml.bz2`; the corpus is ignored by Git.
+Download it from the
+[Wikimedia Simple English dumps](https://dumps.wikimedia.org/simplewiki/latest/)
+page and place the `.xml.bz2` file in `data/`.
 The intake streams one XML page at a time with `iterparse`. The tokenizer
 normalizes NFC, applies `casefold()`, and uses `re.finditer(r"\w+(?:['’]\w+)*")`.
 Apostrophes stay inside words, hyphens split words, and digits are retained.
