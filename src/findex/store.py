@@ -1,8 +1,9 @@
 import json
 import pickle
+from contextlib import contextmanager
 from pathlib import Path
 
-from findex.index import DocMeta, InvertedIndex, Posting
+from findex.index import DocMeta, Index, InvertedIndex, Posting
 
 FORMATS = ("pickle", "json")
 
@@ -44,12 +45,22 @@ def load_index(path: Path | str, fmt: str | None = None) -> InvertedIndex:
     # Тому завантажувати можна ЛИШЕ власний індекс, створений нами самими.
     # Ніколи не робіть pickle.load для файлу, отриманого з мережі чи від інших людей.
     with open(file_path, "rb") as f:
-        index = pickle.load(f)  # noqa: S301
+        index = pickle.load(f)
 
-    if not isinstance(index, InvertedIndex):
+    if not isinstance(index, Index):
         raise TypeError("Завантажений об'єкт не є екземпляром InvertedIndex")
 
     return index
+
+
+@contextmanager
+def open_index(path: Path | str, fmt: str | None = None):
+    """Load an index and guarantee cleanup when leaving the context."""
+    index = load_index(path, fmt=fmt)
+    try:
+        yield index
+    finally:
+        index.close()
 
 
 def _save_json(index: InvertedIndex, path: Path) -> None:
@@ -61,6 +72,7 @@ def _save_json(index: InvertedIndex, path: Path) -> None:
             str(i): {"path": m.path, "title": m.title} for i, m in index.doc_meta.items()
         },
         "doc_lengths": {str(i): n for i, n in index.doc_lengths.items()},
+        "doc_texts": {str(i): text for i, text in index.doc_texts.items()},
         "index": {
             term: [
                 [p.doc_id, p.tf, list(p.positions)] if index.positions else [p.doc_id, p.tf]
@@ -83,6 +95,7 @@ def _load_json(path: Path) -> InvertedIndex:
         for i, m in data["doc_meta"].items()
     }
     index.doc_lengths = {int(i): n for i, n in data["doc_lengths"].items()}
+    index.doc_texts = {int(i): text for i, text in data.get("doc_texts", {}).items()}
     for term, postings in data["index"].items():
         index.index[term] = [
             Posting(p[0], p[1], tuple(p[2])) if len(p) == 3 else Posting(p[0], p[1])
