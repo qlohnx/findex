@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from findex.memory_study import VARIANTS, measure, postings_as_pairs, synthetic_docs
 from findex.store import load_index, save_index
 
@@ -34,6 +36,7 @@ def test_all_variants_survive_pickle_roundtrip(tmp_path: Path):
         assert postings_as_pairs(loaded, "data") == [(2, 1), (3, 2)]
 
 
+@pytest.mark.slow
 def test_measure_runs_and_variants_agree():
     def make_docs():
         return synthetic_docs(30, vocab=500)

@@ -17,24 +17,25 @@
 import argparse
 import gc
 import itertools
+import logging
 import random
 import statistics
-import sys
 import tempfile
 import time
 import tracemalloc
 from array import array
-from collections import Counter, defaultdict
+from collections import Counter
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from findex.index import DocMeta, InvertedIndex
+from findex.index import DocMeta, InvertedIndex, Posting
 from findex.stats import iter_documents
 from findex.store import load_index, save_index
 from findex.tokenize import tokenize
 
-Doc = tuple[int, str, str]  # (doc_id, path, text)
+type Doc = tuple[int, str, str]  # (doc_id, path, text)
+log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -46,14 +47,61 @@ class PlainPosting:
     tf: int
 
 
-class PlainInvertedIndex(InvertedIndex):
+class _StudyIndex[Entry](InvertedIndex):
+    """Keep experimental storage separate from the production posting type."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.entries: dict[str, Entry] = {}
+
+    def _postings(self, entry: Entry) -> list[Posting]:
+        raise NotImplementedError
+
+    def __len__(self) -> int:
+        return len(self.entries)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.entries)
+
+    def __contains__(self, term: object) -> bool:
+        return term in self.entries
+
+    def __getitem__(self, term: str) -> list[Posting]:
+        return self._postings(self.entries[term])
+
+    def get_postings(self, term: str) -> list[Posting]:
+        return self[term] if term in self.entries else []
+
+    def df(self, term: str) -> int:
+        return len(self.get_postings(term))
+
+    def _metadata(
+        self, doc_id: int, path: str, tokens: list[str], title: str, text: str | None
+    ) -> None:
+        self.doc_meta[doc_id] = DocMeta(path=path, title=title)
+        self.doc_lengths[doc_id] = len(tokens)
+        self.__dict__.pop("avg_doc_length", None)
+        if text is not None:
+            self.doc_texts[doc_id] = text
+
+
+class PlainInvertedIndex(_StudyIndex[list[PlainPosting]]):
     """Те саме, що InvertedIndex, але постінги — звичайні dataclass-об'єкти."""
 
-    def add_document(self, doc_id: int, path: str, tokens: list[str]) -> None:
-        self.doc_meta[doc_id] = DocMeta(path=path)
-        self.doc_lengths[doc_id] = len(tokens)
+    def add_document(
+        self,
+        doc_id: int,
+        path: str,
+        tokens: list[str],
+        title: str = "",
+        text: str | None = None,
+    ) -> None:
+        self._metadata(doc_id, path, tokens, title, text)
         for term, tf in Counter(tokens).items():
-            self.index[term].append(PlainPosting(doc_id, tf))
+            self.entries.setdefault(term, []).append(PlainPosting(doc_id, tf))
+
+    def _postings(self, entry: list[PlainPosting]) -> list[Posting]:
+        return [Posting(p.doc_id, p.tf) for p in entry]
 
 
 # ---------------------------------------------------------------------------
@@ -66,25 +114,32 @@ class SlotsInvertedIndex(InvertedIndex):
 # ---------------------------------------------------------------------------
 # Варіант 3: array('I') — без об'єктів-постінгів
 # ---------------------------------------------------------------------------
-def _new_pair() -> tuple[array, array]:
+def _new_pair() -> tuple[array[int], array[int]]:
     # Має бути функцією верхнього рівня, а не lambda: lambda не серіалізується pickle.
     return (array("I"), array("I"))
 
 
-class ArrayInvertedIndex(InvertedIndex):
+class ArrayInvertedIndex(_StudyIndex[tuple[array[int], array[int]]]):
     """Постінги терміна — пара масивів (doc_ids, tfs) по 4 байти на елемент."""
 
-    def __init__(self) -> None:
-        super().__init__()
-        self.index = defaultdict(_new_pair)  # type: ignore[assignment]
-
-    def add_document(self, doc_id: int, path: str, tokens: list[str]) -> None:
-        self.doc_meta[doc_id] = DocMeta(path=path)
-        self.doc_lengths[doc_id] = len(tokens)
+    def add_document(
+        self,
+        doc_id: int,
+        path: str,
+        tokens: list[str],
+        title: str = "",
+        text: str | None = None,
+    ) -> None:
+        self._metadata(doc_id, path, tokens, title, text)
         for term, tf in Counter(tokens).items():
-            doc_ids, tfs = self.index[term]  # type: ignore[misc]
+            if term not in self.entries:
+                self.entries[term] = _new_pair()
+            doc_ids, tfs = self.entries[term]
             doc_ids.append(doc_id)
             tfs.append(tf)
+
+    def _postings(self, entry: tuple[array[int], array[int]]) -> list[Posting]:
+        return [Posting(doc_id, tf) for doc_id, tf in zip(*entry, strict=True)]
 
 
 VARIANTS: list[tuple[str, type[InvertedIndex]]] = [
@@ -96,11 +151,7 @@ VARIANTS: list[tuple[str, type[InvertedIndex]]] = [
 
 def postings_as_pairs(index: InvertedIndex, term: str) -> list[tuple[int, int]]:
     """Єдиний вигляд постінгів для звірки варіантів між собою."""
-    entry = index.index[term]
-    if isinstance(entry, tuple):  # array-варіант
-        doc_ids, tfs = entry
-        return list(zip(doc_ids, tfs, strict=True))
-    return [(p.doc_id, p.tf) for p in entry]
+    return [(p.doc_id, p.tf) for p in index.get_postings(term)]
 
 
 # ---------------------------------------------------------------------------
@@ -164,9 +215,9 @@ def measure(
     tracemalloc.stop()
 
     n_terms = len(index)
-    n_postings = sum(len(postings_as_pairs(index, t)) for t in index.index)
+    n_postings = sum(len(postings_as_pairs(index, t)) for t in index)
     # Відбиток для звірки варіантів: перші 300 термінів за алфавітом
-    sample_terms = sorted(index.index)[:300]
+    sample_terms = sorted(index)[:300]
     fingerprint = {t: postings_as_pairs(index, t) for t in sample_terms}
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -176,7 +227,7 @@ def measure(
         del index
         gc.collect()
 
-        times = []
+        times: list[float] = []
         for _ in range(loads):
             t0 = time.perf_counter()
             loaded = load_index(path)
@@ -222,8 +273,6 @@ def print_report(rows: list[Row]) -> None:
 
 
 def main() -> None:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(
         description="M4: memory study of posting representations."
     )
@@ -248,19 +297,22 @@ def main() -> None:
         def make_docs() -> Iterator[Doc]:
             return synthetic_docs(args.synthetic)
 
-        print(f"Синтетичний корпус: {args.synthetic} документів (НЕ для README)")
+        log.warning(
+            "synthetic corpus: %d documents (not for README measurements)",
+            args.synthetic,
+        )
     elif args.data_dir is not None:
 
         def make_docs() -> Iterator[Doc]:
             return real_docs(args.data_dir, args.limit)
 
-        print(f"Реальний корпус: {args.data_dir}, limit={args.limit}")
+        log.info("corpus %s, limit=%s", args.data_dir, args.limit)
     else:
         parser.error("Вкажіть data_dir або --synthetic N")
 
-    rows = []
+    rows: list[Row] = []
     for label, cls in VARIANTS:
-        print(f"Вимірюю: {label} ...", flush=True)
+        log.info("measuring %s", label)
         rows.append(measure(label, cls, make_docs, args.loads))
 
     print_report(rows)
