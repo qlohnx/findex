@@ -6,6 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from findex.index import InvertedIndex, Posting
+from findex.ranking import BM25, SearchResult, TfIdf, search, timed  # noqa: F401
 from findex.store import load_index
 from findex.tokenize import tokenize
 
@@ -218,8 +219,8 @@ def benchmark(index: InvertedIndex, repeat: int = 20) -> None:
     print(f"{'case':<20}{'df':>16}{'merge, ms':>12}{'set, ms':>10}")
     for name, t1, t2 in cases:
         a, b = term_ids(index, t1), term_ids(index, t2)
-        t_merge = timeit.timeit(lambda: and_ids(a, b), number=repeat) / repeat
-        t_set = timeit.timeit(lambda: and_set(a, b), number=repeat) / repeat
+        t_merge = timeit.timeit(lambda a=a, b=b: and_ids(a, b), number=repeat) / repeat
+        t_set = timeit.timeit(lambda a=a, b=b: and_set(a, b), number=repeat) / repeat
         df = f"{len(a)}/{len(b)}"
         print(f"{name:<20}{df:>16}{t_merge * 1000:>12.3f}{t_set * 1000:>10.3f}")
 
