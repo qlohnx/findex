@@ -51,22 +51,31 @@ def collect_stats(data_dir: Path, limit: int | None = None):
     }
 
 
-def iter_documents(file_path: Path):
-    """Генератор, який читає XML-bz2 файл на льоту і повертає текст кожної статті (<text>)."""
+def iter_pages(file_path: Path):
+    """Генератор (title, text) для кожної статті з XML-bz2 файлу (потоково)."""
     with bz2.open(file_path, "rt", encoding="utf-8") as f:
         context = ElementTree.iterparse(f, events=("end",))
         for _, elem in context:
             if elem.tag.endswith("page"):
+                title = ""
                 text_content = None
                 for child in elem.iter():
-                    if child.tag.endswith("text"):
+                    if child.tag.endswith("title") and not title:
+                        title = child.text or ""
+                    elif child.tag.endswith("text"):
                         text_content = child.text
                         break
 
                 if text_content:
-                    yield text_content
+                    yield title, text_content
 
                 elem.clear()
+
+
+def iter_documents(file_path: Path):
+    """Генератор, який читає XML-bz2 файл на льоту і повертає текст кожної статті (<text>)."""
+    for _, text in iter_pages(file_path):
+        yield text
 
 
 def main():

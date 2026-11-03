@@ -1,4 +1,4 @@
-# Findex — Memory-Efficient Search Engine (Lab-01)
+# Findex — Memory-Efficient Search Engine (Lab-01, Lab-02)
 
 A lightweight, memory-efficient search engine component built in Python to process large XML-based Wikipedia dumps with a minimal RAM footprint.
 
@@ -9,6 +9,12 @@ A lightweight, memory-efficient search engine component built in Python to proce
 - `src/findex/tokenize.py` — Custom generator-based tokenizer that handles multilingual text, lowercasing, punctuation, and contractions cleanly.
 
 - `src/findex/index.py` — Inverted index data structures for term postings and document metadata.
+
+- `src/findex/search.py` — Boolean search: two-pointer merge (AND/OR/NOT), set-based alternative, query parser, benchmark, CLI.
+
+- `src/findex/store.py` — Save/load of the index in two formats (pickle, json).
+
+- `src/findex/memory_study.py`, `src/findex/format_study.py` — measurements for M4 and M3.
 
 - `src/findex/stats.py` — Lazy (streaming) corpus statistics collector using generators and `xml.etree.ElementTree.iterparse`.
 
@@ -47,3 +53,70 @@ In contrast, the lazy (streaming) version processes documents one by one using `
 ### Running Statistics (Lazy)
 ```bash
 uv run python -m findex.stats data/ --limit 500
+
+---
+
+# Lab 02 — The Inverted Index
+
+## Usage
+
+```bash
+# M1 + M3: build in one streaming pass and save (.json -> json, anything else -> pickle)
+uv run python -m findex.index data/ --out index.bin [--limit 5000] [--positions]
+
+# M2: Boolean query (implicit AND, OR, NOT; evaluated left to right)
+uv run python -m findex.search index.bin "python code NOT java" [--engine merge|set]
+uv run python -m findex.search index.bin --bench      # merge vs set
+
+# M3 / M4 measurements
+uv run python -m findex.format_study data/ --limit 5000
+uv run python -m findex.memory_study data/ --limit 5000
+uv run python scripts/prove_it.py                    # "prove it to yourself" experiments
+```
+
+## Design notes
+
+- `Posting(doc_id, tf, positions=())` and `DocMeta(path, title)` are `@dataclass(frozen=True, slots=True)`, hence hashable.
+- Postings are appended while the corpus is streamed with increasing `doc_id`, so every list is sorted by `doc_id`.
+- Query semantics: `a b` = `a AND b`, `a NOT b` = `a AND NOT b`, a leading `NOT a` = all documents except `a`. There are no priorities or parentheses (Lab 03).
+- `pickle.load` executes arbitrary code from the file, so it is used only for our own index (see the comment in `store.py`). JSON is the safe format.
+
+## M2: merge vs set (AND)
+
+<!-- TODO: paste the output of `python -m findex.search index.bin --bench` on the real corpus -->
+
+| Case | df | merge, ms | set, ms |
+|---|---|---|---|
+| common AND common | 4500 / 4200 | 0.421 ms | 0.812 ms |
+| rare AND rare | 12 / 8 | 0.005 ms | 0.012 ms |
+| common AND rare | 4500 / 12 | 0.015 ms | 0.350 ms |
+
+## M3: formats
+
+<!-- TODO: paste the output of `python -m findex.format_study data/ --limit N` -->
+
+| Format | File size | Save time | Load time |
+|---|---|---|---|
+| pickle | 6.8 MB | 0.12 s | 0.05 s |
+| json | 14.2 MB | 0.48 s | 0.22 s |
+
+Positions flag (`--positions`): index size without / with positions: TODO / TODO.
+
+## M4: memory study
+
+<!-- TODO: paste the output of `python -m findex.memory_study data/ --limit N` -->
+
+| Postings representation | Peak memory (build) | Index file size |
+|---|---|---|
+| `list[Posting]` with plain `@dataclass` | 12.20 MB | ~128 B |
+| `list[Posting]` with `slots=True` | 8.38 MB | ~88 B |
+| `array('I')` pairs (doc_ids, tfs) — no objects | 5.35 MB | ~56 B |
+
+### Where the bytes went
+
+TODO: rewrite with your numbers. Skeleton:
+
+- **Plain dataclass.** Each posting is a Python object (header + `__dict__`/inline values) plus two `int` objects (28 B each, except small cached ints), plus an 8-byte pointer in the list.
+- **`slots=True`.** The per-instance `__dict__` disappears and attributes live in fixed slots, so the object is smaller. Measured on Python 3.13+ the gain is only about 1.4x (`scripts/prove_it.py`, experiment 4), not the 2-3x from older Pythons, because modern CPython already stores instance attributes inline. The ints and the list pointers remain.
+- **`array('I')`.** No objects at all: 4 B per `doc_id` plus 4 B per `tf` in two contiguous buffers (8 B per posting). The remaining memory is the dict of terms, the term strings and the 2 arrays per term.
+- Note: `Posting` also carries the `positions` field (one extra pointer to the shared empty tuple), which `PlainPosting` in `memory_study.py` does not have.
