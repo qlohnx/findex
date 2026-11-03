@@ -81,9 +81,17 @@ def _snippet(text: str, terms: set[str], width: int = 80) -> str:
     starts = [folded.find(term) for term in terms if folded.find(term) >= 0]
     start = max(0, (min(starts) if starts else 0) - width)
     result = text[start : start + 2 * width]
-    for term in sorted(terms, key=len, reverse=True):
+    patterns = [
+        re.escape(term) for term in sorted(terms, key=len, reverse=True) if term
+    ]
+    if patterns:
+        # A single substitution prevents a shorter term from matching inside
+        # highlight markers already inserted for a longer term.
         result = re.sub(
-            re.escape(term), lambda m: f"**{m.group(0)}**", result, flags=re.IGNORECASE
+            "|".join(patterns),
+            lambda m: f"**{m.group(0)}**",
+            result,
+            flags=re.IGNORECASE,
         )
     return result
 

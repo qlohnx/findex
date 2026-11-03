@@ -28,3 +28,10 @@ def test_search_accepts_query_tree(tiny_index):
     from findex.query import Term
 
     assert {r.doc_id for r in search(Term("python"), tiny_index)} == {1, 3}
+
+
+def test_overlapping_query_terms_do_not_nest_highlights():
+    index = InvertedIndex()
+    index.add_document(1, "a.txt", ["search", "engine"], text="search engine")
+    result = search("search OR ear", index)[0]
+    assert result.snippet == "**search** engine"
