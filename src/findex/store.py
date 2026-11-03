@@ -3,6 +3,7 @@ import logging
 import pickle
 from collections.abc import Generator
 from contextlib import contextmanager
+from itertools import pairwise
 from pathlib import Path
 from typing import Final, Literal, cast
 
@@ -149,4 +150,44 @@ def _load_json(path: Path) -> InvertedIndex:
                     raise ValueError("invalid index: positions must be a list")
                 offsets = tuple(_integer(offset) for offset in raw_offsets)
             index.index[term].append(Posting(_integer(p[0]), _integer(p[1]), offsets))
+    _validate_index(index)
     return index
+
+
+def _validate_index(index: Index) -> None:
+    """Reject inconsistent JSON data before statistics or scorers consume it."""
+    if index.doc_meta.keys() != index.doc_lengths.keys():
+        raise ValueError("invalid index: document metadata and lengths disagree")
+    if any(length < 0 for length in index.doc_lengths.values()):
+        raise ValueError("invalid index: document lengths must be nonnegative")
+    for postings in index.values():
+        previous_id: int | None = None
+        for posting in postings:
+            length = index.doc_lengths.get(posting.doc_id)
+            if length is None:
+                raise ValueError("invalid index: posting refers to an unknown document")
+            if posting.tf <= 0 or posting.tf > length:
+                raise ValueError(
+                    "invalid index: term frequency must be positive and fit the document"
+                )
+            if previous_id is not None and posting.doc_id <= previous_id:
+                raise ValueError(
+                    "invalid index: postings must have increasing document ids"
+                )
+            previous_id = posting.doc_id
+            offsets = posting.positions
+            if index.positions:
+                if len(offsets) != posting.tf or any(
+                    offset < 0 or offset >= length for offset in offsets
+                ):
+                    raise ValueError(
+                        "invalid index: positions do not match frequency or document length"
+                    )
+                if any(left >= right for left, right in pairwise(offsets)):
+                    raise ValueError(
+                        "invalid index: positions must be strictly increasing"
+                    )
+            elif offsets:
+                raise ValueError(
+                    "invalid index: unexpected positions in a non-positional index"
+                )

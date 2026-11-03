@@ -5,7 +5,7 @@ import pytest
 from typer.testing import CliRunner
 
 from findex.cli import app
-from findex.index import InvertedIndex
+from findex.index import InvertedIndex, build_index
 from findex.store import load_index, save_index
 
 runner = CliRunner()
@@ -138,6 +138,53 @@ def test_corrupt_json_index(tmp_path, contents):
     result = runner.invoke(app, ["stats", str(path)])
     assert result.exit_code == 1
     assert result.stderr.startswith("Error:")
+    assert not result.stdout
+
+
+@pytest.mark.parametrize(
+    "problem",
+    [
+        "zero_tf",
+        "negative_tf",
+        "duplicate_posting",
+        "bad_positions",
+        "negative_length",
+        "missing_metadata",
+    ],
+)
+def test_invalid_index_values_are_rejected(saved_index, problem):
+    data = json.loads(saved_index.read_text(encoding="utf-8"))
+    posting = data["index"]["python"][0]
+    if problem == "zero_tf":
+        posting[1] = 0
+    elif problem == "negative_tf":
+        posting[1] = -1
+    elif problem == "duplicate_posting":
+        data["index"]["python"].insert(0, posting.copy())
+    elif problem == "bad_positions":
+        posting[2] = [999] * posting[1]
+    elif problem == "negative_length":
+        data["doc_lengths"]["1"] = -1
+    elif problem == "missing_metadata":
+        del data["doc_meta"]["1"]
+    saved_index.write_text(json.dumps(data), encoding="utf-8")
+    result = runner.invoke(app, ["stats", str(saved_index)])
+    assert result.exit_code == 1, result.output
+    assert result.stderr.startswith("Error:")
+    assert len(result.stderr.splitlines()) == 1
+    assert not result.stdout
+
+
+def test_invalid_tf_does_not_escape_as_zero_division(tmp_path):
+    path = tmp_path / "index.json"
+    save_index(build_index([("A", "python " * 5), ("B", "python " * 13)]), path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["index"]["python"][0][1] = -1
+    path.write_text(json.dumps(data), encoding="utf-8")
+    result = runner.invoke(app, ["search", str(path), "python", "--json"])
+    assert result.exit_code == 1
+    assert result.stderr.startswith("Error:")
+    assert "Traceback" not in result.output
     assert not result.stdout
 
 
