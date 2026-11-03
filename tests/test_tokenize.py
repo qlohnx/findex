@@ -1,4 +1,21 @@
+import pytest
+
 from findex.tokenize import tokenize
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("Straße STRASSE", ["strasse", "strasse"]),
+        ("Σ σ ς", ["σ", "σ", "σ"]),
+        ("中文 日本語", ["中文", "日本語"]),
+        ("п’ять don't", ["п’ять", "don't"]),
+        ("🙂 — ...", []),
+        ("CAFÉ cafe\u0301", ["café", "café"]),
+    ],
+)
+def test_tokenize_unicode_table(text, expected):
+    assert list(tokenize(text)) == expected
 
 
 def test_tokenize_empty_string():

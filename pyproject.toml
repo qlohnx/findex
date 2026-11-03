@@ -1,13 +1,19 @@
 [project]
 name = "findex"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.4.0"
+description = "A streaming, typed search engine with Boolean queries, TF-IDF and BM25 ranking"
 readme = "README.md"
 authors = [
     { name = "Daniil", email = "daniilsova0407@gmail.com" }
 ]
 requires-python = ">=3.14"
-dependencies = []
+dependencies = ["typer>=0.27.3,<1", "rich>=14,<15"]
+
+[project.urls]
+Repository = "https://github.com/qlohnx/findex"
+
+[project.scripts]
+findex = "findex.cli:app"
 
 [build-system]
 requires = ["uv_build>=0.12.13,<0.13.0"]
@@ -17,7 +23,31 @@ build-backend = "uv_build"
 dev = [
     "pytest>=9.2.0",
     "ruff>=0.17.3",
+    "pyright>=1.1.400",
+    "pytest-cov>=6",
+    "hypothesis>=6",
 ]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "--import-mode=importlib"
+markers = ["slow: measurements or integration tests taking over one second"]
+
+[tool.pyright]
+include = ["src/findex"]
+typeCheckingMode = "strict"
+pythonVersion = "3.14"
+venvPath = "."
+venv = ".venv"
+
+[tool.ruff]
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP"]
+
+[tool.coverage.run]
+source = ["findex"]
+
+[tool.coverage.report]
+show_missing = true
