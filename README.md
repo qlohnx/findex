@@ -1,4 +1,4 @@
-# Findex — Memory-Efficient Search Engine (Lab-01–Lab-04)
+# Findex — Memory-Efficient Search Engine (Lab-01–Lab-05)
 
 [![CI](https://github.com/qlohnx/findex/actions/workflows/ci.yml/badge.svg?branch=lab-04)](https://github.com/qlohnx/findex/actions/workflows/ci.yml)
 
@@ -7,6 +7,7 @@ A lightweight, memory-efficient search engine component built in Python to proce
 Python **3.14+** is required, continuing the interpreter version used in Lab 03.
 Lab 04 provides an installable `findex` CLI; the earlier `python -m` commands
 and the Lab 01–03 results below are retained.
+Lab 05 adds local serial, threaded, and process-based index construction.
 
 ```bash
 uv sync --locked --dev
@@ -43,6 +44,7 @@ Use double quotes around the whole query in PowerShell when convenient.
 
 - `src/findex/query.py` — recursive-descent parser and composable query tree.
 - `src/findex/ranking.py` — TF-IDF, BM25, timed search, caching, results, and snippets.
+- `src/findex/parallel.py` — disk-backed chunks, partial indexes, and ordered merge for three executors.
 
 ## Definition of Done Verification
 
@@ -397,3 +399,147 @@ findex --help
    that imports and calls `findex.cli:app`.
 9. Logging with `%` arguments defers message formatting until the selected
    level is enabled; an f-string is formatted before calling the logger.
+
+---
+
+# Lab 05 — Concurrency and the GIL
+
+`findex index` now accepts `--executor serial|threads|processes` and
+`--workers N`. The default remains **serial**: on the measured corpus slice it
+was faster than both ordinary threaded and process-based builds. The old
+`build_index(pages)` API is retained. The installed CLI streams XML/text pages
+into bounded temporary chunk files (256 documents each), assigning global
+document IDs before starting workers. `build_partial` reads chunk **paths** and
+constructs postings; `merge` consumes partials in original order. It preserves
+document IDs, sorted postings, term insertion order, metadata, positions, and
+snippets. The three executors write byte-identical JSON and pickle files in
+tests; JSON bytes also match the Lab 04 implementation. Pickle bytes need not
+match Lab 04 because pickle memoizes object identity, but loaded values do.
+Temporary chunks are deleted on success or failure. Process workers use the
+`spawn` context and module-level functions; worker exceptions propagate.
+Local validation: **119 tests passed**, including six byte-equality tests also
+run under free-threaded 3.13t; whole-package coverage is **81%** and the new
+parallel module is **99%** covered. Strict pyright reports 0 errors, and Ruff
+lint and format checks pass. A freshly built wheel was also installed outside
+the repository; its serial and process CLI builds wrote identical indexes,
+and help, statistics, and both scorers worked.
+
+```bash
+uv run findex index data/simplewiki-latest-pages-articles.xml.bz2 \
+  --out data/parallel-index.json --positions --limit 1000 \
+  --executor processes --workers 4
+uv run findex search data/parallel-index.json '"computer science"' --k 5
+```
+
+## Measurements
+
+Run the reproducible experiments with:
+
+```bash
+uv run --locked python scripts/benchmark_parallel.py \
+  data/simplewiki-latest-pages-articles.xml.bz2 --limit 1000 \
+  --chunk-size 64 --runs 3 --warmups 1 --workers 1 2 4 8 16
+uv run --no-project --python 3.13t --with psutil python \
+  scripts/benchmark_free_threaded.py \
+  data/simplewiki-latest-pages-articles.xml.bz2 --limit 1000 \
+  --chunk-size 64 --runs 3 --warmups 1 --workers 1 2 4 8 16
+uv run --locked python scripts/plot_lab05.py
+```
+
+Machine: Intel Core i5-12500H, 12 physical / 16 logical cores, 16 GB RAM,
+Windows 11. Normal runs used CPython 3.14.7 with the GIL; free-threaded runs
+used CPython 3.13.15t with `sys._is_gil_enabled() == False`. Project packaging
+still requires Python 3.14+, so the 3.13t experiment imports only the
+stdlib-based index modules directly from `src/` in an isolated `uv --no-project`
+run. The same first 1,000 Wikipedia pages (66,170 distinct terms) were staged
+into 16 files of at most 64 documents. Staging took 0.76 s on 3.14 and 0.60 s
+on 3.13t; it is **excluded** from the table's wall/CPU/RSS values. Add it for end-to-end
+time. Each configuration ran one warmup and three measured repetitions.
+Numbers are medians; raw repetitions and spread are in
+[`benchmarks/lab05.json`](benchmarks/lab05.json) and
+[`benchmarks/lab05-3.13t.json`](benchmarks/lab05-3.13t.json).
+CPU is parent `process_time` plus worker CPU for processes; for threads,
+parent CPU already includes all threads. RSS is the sampled **parent-process**
+peak, not the total of process workers. Merge time is measured separately
+during ordered reduction and may overlap worker execution for threads.
+All configurations produced the same document and term counts. Speedup uses
+serial 3.14 for 3.14 rows and one-thread 3.13t for 3.13t rows; this isolates
+scaling from interpreter differences and changing background load. The normal
+threaded runs varied notably (up to 0.95 s spread at two workers), so these
+numbers are not precise hardware rankings.
+
+| Executor | Workers | Wall, s | CPU, s | Parent RSS, MB | Merge, s | Speedup |
+|---|---:|---:|---:|---:|---:|---:|
+| serial 3.14 | 1 | 1.836 | 1.672 | 141.9 | 0.087 | 1.00× |
+| threads 3.14 | 1 | 1.951 | 1.859 | 143.5 | 0.144 | 0.94× |
+| threads 3.14 | 2 | 2.353 | 2.281 | 144.3 | 0.213 | 0.78× |
+| threads 3.14 | 4 | 2.587 | 2.406 | 145.9 | 0.569 | 0.71× |
+| threads 3.14 | 8 | 2.279 | 2.141 | 151.5 | 0.298 | 0.81× |
+| threads 3.14 | 16 | 2.877 | 2.719 | 155.7 | 0.934 | 0.64× |
+| processes 3.14 | 1 | 4.338 | 4.266 | 163.1 | 0.214 | 0.42× |
+| processes 3.14 | 2 | 3.542 | 3.922 | 164.1 | 0.217 | 0.52× |
+| processes 3.14 | 4 | 3.010 | 3.328 | 164.9 | 0.436 | 0.61× |
+| processes 3.14 | 8 | 3.144 | 3.609 | 164.4 | 0.126 | 0.58× |
+| processes 3.14 | 16 | 3.977 | 4.297 | 166.3 | 0.127 | 0.46× |
+| threads 3.13t | 1 | 1.080 | 1.125 | 158.5 | 0.105 | 1.00× |
+| threads 3.13t | 2 | 0.747 | 1.359 | 192.6 | 0.119 | 1.45× |
+| threads 3.13t | 4 | 0.558 | 1.641 | 219.8 | 0.200 | 1.94× |
+| threads 3.13t | 8 | 0.526 | 2.234 | 252.3 | 0.205 | 2.05× |
+| threads 3.13t | 16 | 0.955 | 4.312 | 295.5 | 0.098 | 1.13× |
+
+![Speedup versus worker count, with ideal scaling for reference](benchmarks/lab05-speedup.png)
+
+## What the measurements mean
+
+Concurrency means scheduling multiple tasks; parallelism means executing
+several simultaneously. Indexing spends most of its build time tokenizing
+strings and updating Python dictionaries, so it is substantially CPU-bound.
+With the GIL in ordinary CPython 3.14, only one thread at a time executes
+Python bytecode. Other threads can run while one waits for disk I/O, but these
+chunks spend too little time waiting to recover the thread scheduling and
+merge overhead. More threads therefore do not improve wall time here. The
+GIL protects interpreter internals, not application invariants: a shared
+`Counter` would still need synchronization. Our workers instead construct
+independent partial indexes; only the parent mutates the final index. That
+design also avoided a race in the 3.13t run. No race was observed, so no
+race-condition fix was necessary.
+
+Processes have separate interpreters and GILs, so they *can* run CPU work on
+multiple cores. They are not automatically faster. Windows `spawn` starts
+fresh interpreters; workers unpickle their tasks, read chunk files, and pickle
+partial indexes back. The parent then merges postings and metadata in document
+order. On only 1,000 pages, process creation, serialization, data transfer,
+and merge exceed the CPU time that parallelism saves. Even two processes took
+3.542 s versus 1.836 s serial. Parent RSS understates their actual total
+memory because child RSS is excluded. Sending paths instead of already-loaded
+documents avoids an additional input-copy cost, but the result still includes
+document texts required for search snippets. This is why `processes` is an
+option, not the default, until a larger-corpus measurement demonstrates a win.
+
+Without the GIL, the same independent partial-builder code runs Python work
+on multiple cores. Eight 3.13t threads reduced indexing wall time from that
+runtime's 1.080 s one-thread baseline to 0.526 s (2.05×). CPU rose from
+1.125 to 2.234 s because work really overlapped across cores and incurred
+coordination costs. Sixteen threads regressed to 0.955 s: more concurrency
+increased memory, scheduling, and merge pressure. This is a measured result,
+not an assumed linear speedup. Cross-interpreter absolute times need caution:
+ordinary serial runs varied from 1.17 to 1.84 s across sessions as load changed.
+
+Amdahl's law limits the complete pipeline. Within the 3.13t run, chunk staging
+was serial and cost 0.60 s; one-thread indexing cost 1.080 s. Even if indexing
+were infinitely fast, the end-to-end speedup would be at most
+`(0.60 + 1.080) / 0.60 ≈ 2.8×` before serialization or output costs. The
+measured eight-thread path was `(0.60 + 1.080) / (0.60 + 0.526) ≈ 1.49×`
+end-to-end, excluding final save time. Ordered merge remains sequential and
+becomes a larger fraction as workers speed up; at eight 3.13t threads it took
+0.205 s. An I/O-bound crawler
+or network fetcher is a different workload: ordinary threads can overlap
+waiting there without needing a GIL-free interpreter.
+
+**Scope of evidence:** This table is a 1,000-page slice, *not* the lab's
+requested full-corpus benchmark. The source dump is 356 MB compressed; only
+about 1.8 GB of physical RAM was free while measuring. Running the entire dump
+with 16 process workers and an in-memory final index was not safe on this
+machine. The benchmark scripts accept a larger `--limit` or no limit for a
+machine with sufficient RAM. Consequently the full-corpus performance claim
+and any process-default decision remain open.
