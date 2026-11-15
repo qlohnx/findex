@@ -47,6 +47,73 @@ def test_index_xml_dump(wiki_dump, tmp_path):
     assert load_index(path).num_docs == 2
 
 
+@pytest.mark.parametrize("executor", ["serial", "threads", "processes"])
+def test_index_executor_flag(text_corpus, tmp_path, executor):
+    baseline = tmp_path / "baseline.json"
+    baseline_result = runner.invoke(
+        app,
+        ["index", str(text_corpus), "--out", str(baseline), "--positions"],
+    )
+    assert baseline_result.exit_code == 0, baseline_result.output
+    path = tmp_path / f"{executor}.json"
+    result = runner.invoke(
+        app,
+        [
+            "index",
+            str(text_corpus),
+            "--out",
+            str(path),
+            "--positions",
+            "--executor",
+            executor,
+            "--workers",
+            "2",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert load_index(path).num_docs == 4
+    assert path.read_bytes() == baseline.read_bytes()
+
+
+@pytest.mark.parametrize("option, value", [("--workers", "0"), ("--executor", "bogus")])
+def test_invalid_index_executor_options(text_corpus, tmp_path, option, value):
+    result = runner.invoke(
+        app,
+        [
+            "index",
+            str(text_corpus),
+            "--out",
+            str(tmp_path / "index.json"),
+            option,
+            value,
+        ],
+    )
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+
+
+def test_index_reports_staging_and_merge_times(text_corpus, tmp_path):
+    path = tmp_path / "index.json"
+    result = runner.invoke(
+        app,
+        [
+            "-v",
+            "index",
+            str(text_corpus),
+            "--out",
+            str(path),
+            "--executor",
+            "threads",
+            "--workers",
+            "2",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "INFO: staged" in result.stderr
+    assert "INFO: index build" in result.stderr
+    assert "Indexed 4 documents" in result.stdout
+
+
 @pytest.mark.parametrize("scorer", ["bm25", "tfidf"])
 def test_search_json_is_clean(saved_index, scorer):
     result = runner.invoke(

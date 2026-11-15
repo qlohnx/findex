@@ -52,6 +52,19 @@ def main() -> None:
         (corpus / "two.txt").write_text("Java search engine", encoding="utf-8")
         index = root / "index.json"
         run("index", str(corpus), "--out", str(index), "--positions")
+        parallel = root / "parallel.json"
+        run(
+            "index",
+            str(corpus),
+            "--out",
+            str(parallel),
+            "--positions",
+            "--executor",
+            "processes",
+            "--workers",
+            "2",
+        )
+        assert parallel.read_bytes() == index.read_bytes()
         assert "Documents" in run("stats", str(index)).stdout
         for scorer in ("bm25", "tfidf"):
             rows = [
@@ -62,7 +75,7 @@ def main() -> None:
             ]
             assert len(rows) == 1 and rows[0]["doc_id"] == 1
         print(
-            "Wheel installed outside the repository: help, index, stats, and both scorers passed."
+            "Wheel installed outside the repository: help, serial/process indexing, stats, and both scorers passed."
         )
 
 

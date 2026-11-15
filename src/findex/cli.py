@@ -1,10 +1,12 @@
-"""Installed CLI for the search engine from Labs 1–3."""
+"""Installed search CLI with streaming input and parallel indexing options."""
 
 import itertools
 import json
 import logging
 import pickle
 import re
+import tempfile
+import time
 from collections import Counter
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
@@ -19,7 +21,7 @@ from rich.table import Table
 from rich.text import Text
 
 from findex.corpus import iter_documents
-from findex.index import build_index
+from findex.parallel import build_from_chunks, stage_pages
 from findex.ranking import BM25, Scorer, TfIdf
 from findex.ranking import search as ranked_search
 from findex.stats import iter_pages
@@ -121,8 +123,15 @@ def index_command(
     limit: Annotated[
         int | None, typer.Option("--limit", min=1, help="Maximum documents to index.")
     ] = None,
+    workers: Annotated[
+        int, typer.Option("--workers", min=1, help="Number of indexing workers.")
+    ] = 1,
+    executor: Annotated[
+        Literal["serial", "threads", "processes"],
+        typer.Option("--executor", help="serial, threads, or processes."),
+    ] = "serial",
 ) -> None:
-    """Build an index in one streaming pass, with progress on stderr."""
+    """Stage a streaming corpus and build its index with a chosen executor."""
     with _expected_errors():
         pages = _pages(corpus)
         if limit is not None:
@@ -130,12 +139,29 @@ def index_command(
         console = Console(stderr=True)
         progress = track(
             pages,
-            description="Indexing",
+            description="Staging corpus",
             total=limit,
             console=console,
             disable=not console.is_terminal,
         )
-        index = build_index(progress, source=str(corpus), positions=positions)
+        with tempfile.TemporaryDirectory(prefix="findex-chunks-") as temporary:
+            stage_start = time.perf_counter()
+            chunks = stage_pages(progress, str(corpus), Path(temporary))
+            log.info(
+                "staged %d chunks in %.3fs",
+                len(chunks),
+                time.perf_counter() - stage_start,
+            )
+            index, timing = build_from_chunks(
+                chunks, positions=positions, executor=executor, workers=workers
+            )
+        log.info(
+            "index build %.3fs (merge %.3fs), executor=%s workers=%d",
+            timing.wall_seconds,
+            timing.merge_seconds,
+            executor,
+            workers,
+        )
         save_index(index, out)
         typer.echo(
             f"Indexed {index.num_docs} documents, {len(index)} terms. Saved to {out}"
