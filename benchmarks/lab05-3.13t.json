@@ -1,0 +1,158 @@
+{
+  "python": "3.13.15 experimental free-threading build (main, Sep  1 2026, 14:19:15) [MSC v.1944 64 bit (AMD64)]",
+  "gil_enabled": false,
+  "platform": "Windows-11-10.0.26300-SP0",
+  "cpu_model": "Intel64 Family 6 Model 154 Stepping 3, GenuineIntel",
+  "logical_cpus": 16,
+  "corpus": "data\\simplewiki-latest-pages-articles.xml.bz2",
+  "limit": 1000,
+  "documents": 1000,
+  "terms": 66170,
+  "chunk_size": 64,
+  "chunks": 16,
+  "stage_s": 0.5962037999997847,
+  "runs": 3,
+  "warmups": 1,
+  "rows": [
+    {
+      "executor": "threads-3.13t",
+      "workers": 1,
+      "samples": [
+        {
+          "wall_s": 1.0403281000326388,
+          "cpu_s": 1.109375,
+          "parent_rss_mb": 128.10546875,
+          "merge_s": 0.09792539989575744
+        },
+        {
+          "wall_s": 1.172111899999436,
+          "cpu_s": 1.1875,
+          "parent_rss_mb": 158.5234375,
+          "merge_s": 0.10540220013353974
+        },
+        {
+          "wall_s": 1.079864599974826,
+          "cpu_s": 1.125,
+          "parent_rss_mb": 176.44140625,
+          "merge_s": 0.16357160004554316
+        }
+      ],
+      "wall_s": 1.08,
+      "cpu_s": 1.125,
+      "parent_rss_mb": 158.523,
+      "merge_s": 0.105
+    },
+    {
+      "executor": "threads-3.13t",
+      "workers": 2,
+      "samples": [
+        {
+          "wall_s": 0.6977760000154376,
+          "cpu_s": 1.265625,
+          "parent_rss_mb": 192.61328125,
+          "merge_s": 0.10145429999101907
+        },
+        {
+          "wall_s": 0.7644368999754079,
+          "cpu_s": 1.390625,
+          "parent_rss_mb": 204.1640625,
+          "merge_s": 0.20203799998853356
+        },
+        {
+          "wall_s": 0.7474568000179715,
+          "cpu_s": 1.359375,
+          "parent_rss_mb": 187.31640625,
+          "merge_s": 0.11868250014958903
+        }
+      ],
+      "wall_s": 0.747,
+      "cpu_s": 1.359,
+      "parent_rss_mb": 192.613,
+      "merge_s": 0.119
+    },
+    {
+      "executor": "threads-3.13t",
+      "workers": 4,
+      "samples": [
+        {
+          "wall_s": 0.5584861999959685,
+          "cpu_s": 1.65625,
+          "parent_rss_mb": 204.76953125,
+          "merge_s": 0.2001687998417765
+        },
+        {
+          "wall_s": 0.5842456999816932,
+          "cpu_s": 1.640625,
+          "parent_rss_mb": 219.78125,
+          "merge_s": 0.20489689998794347
+        },
+        {
+          "wall_s": 0.5450040000141598,
+          "cpu_s": 1.578125,
+          "parent_rss_mb": 227.01171875,
+          "merge_s": 0.11781490000430495
+        }
+      ],
+      "wall_s": 0.558,
+      "cpu_s": 1.641,
+      "parent_rss_mb": 219.781,
+      "merge_s": 0.2
+    },
+    {
+      "executor": "threads-3.13t",
+      "workers": 8,
+      "samples": [
+        {
+          "wall_s": 0.5258530999999493,
+          "cpu_s": 2.234375,
+          "parent_rss_mb": 248.65234375,
+          "merge_s": 0.2038133999449201
+        },
+        {
+          "wall_s": 0.54477840004256,
+          "cpu_s": 2.390625,
+          "parent_rss_mb": 252.2578125,
+          "merge_s": 0.20456749986624345
+        },
+        {
+          "wall_s": 0.5240243000444025,
+          "cpu_s": 2.109375,
+          "parent_rss_mb": 257.50390625,
+          "merge_s": 0.240838699915912
+        }
+      ],
+      "wall_s": 0.526,
+      "cpu_s": 2.234,
+      "parent_rss_mb": 252.258,
+      "merge_s": 0.205
+    },
+    {
+      "executor": "threads-3.13t",
+      "workers": 16,
+      "samples": [
+        {
+          "wall_s": 0.8982437999802642,
+          "cpu_s": 4.125,
+          "parent_rss_mb": 303.328125,
+          "merge_s": 0.09216770005878061
+        },
+        {
+          "wall_s": 1.0606678000185639,
+          "cpu_s": 4.3125,
+          "parent_rss_mb": 295.46875,
+          "merge_s": 0.23516740009654313
+        },
+        {
+          "wall_s": 0.9545924999983981,
+          "cpu_s": 4.46875,
+          "parent_rss_mb": 294.75,
+          "merge_s": 0.09827350015984848
+        }
+      ],
+      "wall_s": 0.955,
+      "cpu_s": 4.312,
+      "parent_rss_mb": 295.469,
+      "merge_s": 0.098
+    }
+  ]
+}
