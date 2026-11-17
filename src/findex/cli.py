@@ -1,5 +1,6 @@
 """Installed search CLI with streaming input and parallel indexing options."""
 
+import asyncio
 import itertools
 import json
 import logging
@@ -10,17 +11,23 @@ import time
 from collections import Counter
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
+from dataclasses import asdict
 from pathlib import Path
-from typing import Annotated, Literal, TypedDict
+from typing import Annotated, Literal, TextIO, TypedDict
+from urllib.parse import urlsplit
 from xml.etree.ElementTree import ParseError
 
+import httpx
 import typer
 from rich.console import Console
+from rich.live import Live
 from rich.progress import track
 from rich.table import Table
 from rich.text import Text
 
-from findex.corpus import iter_documents
+from findex.corpus import iter_local_pages
+from findex.crawler import CrawlStats, Page, crawl
+from findex.crawler.urls import canonical_url
 from findex.parallel import build_from_chunks, stage_pages
 from findex.ranking import BM25, Scorer, TfIdf
 from findex.ranking import search as ranked_search
@@ -93,10 +100,12 @@ def _pages(corpus: Path) -> Iterator[tuple[str, str]]:
     if corpus.is_file():
         if corpus.name.endswith(".xml.bz2"):
             yield from iter_pages(corpus)
-        elif corpus.suffix == ".txt":
-            yield corpus.stem, corpus.read_text(encoding="utf-8")
+        elif corpus.suffix in (".txt", ".jsonl"):
+            yield from iter_local_pages(corpus)
         else:
-            raise ValueError("corpus must be a .txt file, .xml.bz2 dump, or directory")
+            raise ValueError(
+                "corpus must be a .txt file, .jsonl crawl, .xml.bz2 dump, or directory"
+            )
         return
     dumps = sorted(corpus.glob("*.xml.bz2"))
     if dumps:
@@ -104,11 +113,11 @@ def _pages(corpus: Path) -> Iterator[tuple[str, str]]:
             yield from iter_pages(dump)
     else:
         found = False
-        for _, path, text in iter_documents(corpus):
+        for title, text in iter_local_pages(corpus):
             found = True
-            yield Path(path).stem, text
+            yield title, text
         if not found:
-            raise ValueError(f"no .txt or .xml.bz2 corpus files in {corpus}")
+            raise ValueError(f"no .txt, .jsonl, or .xml.bz2 corpus files in {corpus}")
 
 
 @app.command("index")
@@ -165,6 +174,145 @@ def index_command(
         save_index(index, out)
         typer.echo(
             f"Indexed {index.num_docs} documents, {len(index)} terms. Saved to {out}"
+        )
+
+
+def _crawl_display(stats: CrawlStats, elapsed: float) -> Table:
+    table = Table(title="Crawl progress")
+    table.add_column("Pages")
+    table.add_column("Pages/s")
+    table.add_column("In flight")
+    table.add_column("Errors")
+    table.add_column("Queue")
+    table.add_row(
+        str(stats.pages),
+        f"{stats.pages / elapsed:.1f}" if elapsed > 0 else "0.0",
+        str(stats.in_flight),
+        str(stats.errors),
+        str(stats.queue_depth),
+    )
+    return table
+
+
+class _CrawlProgress:
+    """Render current counters on every Rich refresh, even during slow requests."""
+
+    def __init__(self, stats: CrawlStats, started: float) -> None:
+        self.stats = stats
+        self.started = started
+
+    def __rich__(self) -> Table:
+        return _crawl_display(self.stats, time.perf_counter() - self.started)
+
+
+def _write_page(stream: TextIO, page: Page) -> None:
+    stream.write(json.dumps(asdict(page), ensure_ascii=False) + "\n")
+    stream.flush()
+
+
+async def _crawl_to_jsonl(
+    seed_url: str,
+    out: Path,
+    *,
+    max_pages: int,
+    concurrency: int,
+    per_host: int,
+    delay: float,
+    allowed_domains: list[str] | None,
+    client: httpx.AsyncClient | None = None,
+) -> CrawlStats:
+    stats = CrawlStats()
+    started = time.perf_counter()
+    console = Console(stderr=True)
+    stream = await asyncio.to_thread(out.open, "w", encoding="utf-8")
+    try:
+        with Live(
+            _CrawlProgress(stats, started),
+            console=console,
+            refresh_per_second=4,
+            transient=not console.is_terminal,
+        ) as display:
+            async for page in crawl(
+                [seed_url],
+                max_pages=max_pages,
+                concurrency=concurrency,
+                per_host=per_host,
+                per_host_delay=delay,
+                allowed_domains=allowed_domains,
+                client=client,
+                stats=stats,
+            ):
+                await asyncio.to_thread(_write_page, stream, page)
+                display.refresh()
+            display.refresh()
+    finally:
+        await asyncio.to_thread(stream.close)
+    return stats
+
+
+@app.command("crawl")
+def crawl_command(
+    seed_url: Annotated[str, typer.Argument(help="HTTP(S) seed URL to crawl.")],
+    max_pages: Annotated[
+        int, typer.Option("--max-pages", min=1, help="Maximum saved pages.")
+    ] = 500,
+    concurrency: Annotated[
+        int, typer.Option("--concurrency", min=1, help="Global worker count.")
+    ] = 10,
+    per_host: Annotated[
+        int, typer.Option("--per-host", min=1, help="Concurrent requests per host.")
+    ] = 2,
+    out: Annotated[
+        Path, typer.Option("--out", help="Streaming JSON Lines output file.")
+    ] = Path("data/crawl.jsonl"),
+    log_path: Annotated[
+        Path, typer.Option("--log", help="Per-URL crawl status log.")
+    ] = Path("crawl.log"),
+    delay: Annotated[
+        float,
+        typer.Option("--delay", min=0, help="Minimum seconds between starts per host."),
+    ] = 0.1,
+    allowed_domain: Annotated[
+        list[str],
+        typer.Option("--allowed-domain", help="Additional allowed domain; repeatable."),
+    ] = [],
+) -> None:
+    """Polite async crawl; save pages as an indexable JSONL corpus."""
+    with _expected_errors():
+        normalized_seed = canonical_url(seed_url)
+        if normalized_seed is None:
+            raise ValueError("seed must be a valid HTTP(S) URL")
+        seed_host = urlsplit(normalized_seed).hostname
+        assert seed_host is not None
+        out.parent.mkdir(parents=True, exist_ok=True)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        crawler_logger = logging.getLogger("findex.crawler")
+        previous_level = crawler_logger.level
+        handler = logging.FileHandler(log_path, encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        crawler_logger.setLevel(logging.INFO)
+        crawler_logger.addHandler(handler)
+        try:
+            stats = asyncio.run(
+                _crawl_to_jsonl(
+                    seed_url,
+                    out,
+                    max_pages=max_pages,
+                    concurrency=concurrency,
+                    per_host=per_host,
+                    delay=delay,
+                    allowed_domains=[seed_host, *allowed_domain]
+                    if allowed_domain
+                    else None,
+                ),
+                debug=True,
+            )
+        finally:
+            crawler_logger.removeHandler(handler)
+            handler.close()
+            crawler_logger.setLevel(previous_level)
+        typer.echo(
+            f"Saved {stats.pages} pages to {out}; {stats.errors} errors. Log: {log_path}"
         )
 
 

@@ -46,6 +46,7 @@ def main() -> None:
             )
 
         assert "Usage" in run("--help").stdout
+        assert "--max-pages" in run("crawl", "--help").stdout
         corpus = root / "corpus"
         corpus.mkdir()
         (corpus / "one.txt").write_text("Python search engine", encoding="utf-8")
@@ -75,7 +76,7 @@ def main() -> None:
             ]
             assert len(rows) == 1 and rows[0]["doc_id"] == 1
         print(
-            "Wheel installed outside the repository: help, serial/process indexing, stats, and both scorers passed."
+            "Wheel installed outside the repository: crawl help, serial/process indexing, stats, and both scorers passed."
         )
 
 

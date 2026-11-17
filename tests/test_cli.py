@@ -18,7 +18,7 @@ def saved_index(tmp_path: Path, tiny_index: InvertedIndex) -> Path:
     return path
 
 
-@pytest.mark.parametrize("command", [[], ["index"], ["search"], ["stats"]])
+@pytest.mark.parametrize("command", [[], ["index"], ["search"], ["stats"], ["crawl"]])
 def test_help(command):
     result = runner.invoke(app, [*command, "--help"])
     assert result.exit_code == 0, result.output
