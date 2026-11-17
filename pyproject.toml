@@ -7,7 +7,7 @@ authors = [
     { name = "Daniil", email = "daniilsova0407@gmail.com" }
 ]
 requires-python = ">=3.14"
-dependencies = ["typer>=0.27.3,<1", "rich>=14,<15"]
+dependencies = ["typer>=0.27.3,<1", "rich>=14,<15", "httpx>=0.28,<1"]
 
 [project.urls]
 Repository = "https://github.com/qlohnx/findex"
