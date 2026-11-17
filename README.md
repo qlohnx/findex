@@ -1,6 +1,6 @@
-# Findex — Memory-Efficient Search Engine (Lab-01–Lab-05)
+# Findex — Memory-Efficient Search Engine (Lab-01–Lab-06)
 
-[![CI](https://github.com/qlohnx/findex/actions/workflows/ci.yml/badge.svg?branch=lab-04)](https://github.com/qlohnx/findex/actions/workflows/ci.yml)
+[![CI](https://github.com/qlohnx/findex/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/qlohnx/findex/actions/workflows/ci.yml)
 
 A lightweight, memory-efficient search engine component built in Python to process large XML-based Wikipedia dumps with a minimal RAM footprint.
 
@@ -8,6 +8,7 @@ Python **3.14+** is required, continuing the interpreter version used in Lab 03.
 Lab 04 provides an installable `findex` CLI; the earlier `python -m` commands
 and the Lab 01–03 results below are retained.
 Lab 05 adds local serial, threaded, and process-based index construction.
+Lab 06 adds an async crawler whose JSONL output feeds the same indexer.
 
 ```bash
 uv sync --locked --dev
@@ -18,8 +19,8 @@ uv run findex search data/lab04-index.json python --scorer tfidf --json
 uv run findex stats data/lab04-index.json
 ```
 
-The corpus can be a `.txt` file, a directory of text files, a `.xml.bz2`
-Wikipedia dump, or a directory of dumps. Phrase queries require `--positions`.
+The corpus can be a `.txt` file, a crawler `.jsonl` file, a directory of text
+files, a `.xml.bz2` Wikipedia dump, or a directory of dumps. Phrase queries require `--positions`.
 Use double quotes around the whole query in PowerShell when convenient.
 
 ---
@@ -45,6 +46,7 @@ Use double quotes around the whole query in PowerShell when convenient.
 - `src/findex/query.py` — recursive-descent parser and composable query tree.
 - `src/findex/ranking.py` — TF-IDF, BM25, timed search, caching, results, and snippets.
 - `src/findex/parallel.py` — disk-backed chunks, partial indexes, and ordered merge for three executors.
+- `src/findex/crawler/` — bounded async URL frontier, polite fetching, robots cache, and HTML extraction.
 
 ## Definition of Done Verification
 
@@ -355,7 +357,7 @@ nonzero exit code. Typer validates CLI options before running commands.
 coverage, package builds, and isolated wheel installation on Ubuntu and Windows
 using Python 3.14. Distribution artifacts and coverage XML are uploaded by CI.
 The release commit passed [CI on Ubuntu and Windows](https://github.com/qlohnx/findex/actions/runs/41700115674).
-The badge tracks the latest GitHub run for `lab-04`.
+The badge tracks the latest GitHub run for `main`.
 
 **Published:** [findex v0.4.0](https://github.com/qlohnx/findex/releases/tag/v0.4.0)
 contains the wheel and source archive. The public wheel's SHA-256 was checked
@@ -543,3 +545,96 @@ with 16 process workers and an in-memory final index was not safe on this
 machine. The benchmark scripts accept a larger `--limit` or no limit for a
 machine with sufficient RAM. Consequently the full-corpus performance claim
 and any process-default decision remain open.
+
+---
+
+# Lab 06 — The Async Crawler
+
+`findex crawl` collects HTML pages asynchronously and writes each successful
+page immediately to JSON Lines. The crawler yields `Page(url, title, text,
+fetched_at)` objects from an async generator. `findex index` consumes that
+JSONL file through the same lazy corpus intake as text files; indexing and
+tokenization happen **after** the crawl, outside the event loop.
+
+```bash
+# Replace the URL with a site you own or have explicit permission to crawl.
+uv run findex crawl https://your-owned-site.example/ \
+  --max-pages 200 --concurrency 10 --per-host 2 \
+  --out data/crawl.jsonl --log crawl.log
+uv run findex index data/crawl.jsonl --out data/crawl-index.json --positions
+uv run findex search data/crawl-index.json python --k 5
+```
+
+The default User-Agent identifies `findex/0.6` and gives the repository's
+GitHub Issues URL as a contact. By default the seed host is the only allowed
+domain; `--allowed-domain` can be repeated to add explicitly authorized
+domains. URLs are normalized (lowercase scheme/host, no fragment, normalized
+trailing slash, sorted query) and deduplicated before entering an
+`asyncio.Queue` frontier. HTTP redirects are handled as new frontier URLs,
+never followed blindly across the allowlist. A `TaskGroup` owns the workers;
+`max_pages` cancels them and drains the queue cleanly. A global semaphore
+bounds all fetches, while a per-host semaphore and minimum start interval
+(including `robots.txt` Crawl-delay when present) limit each server. The same
+per-host timer runs before robots requests, page requests, and retries.
+
+The per-host `RobotsCache` fetches rules once and denies crawling if the rules
+cannot be obtained (other than 404, meaning no robots file). `fetch()` wraps
+every request in `asyncio.timeout`, retries 429/5xx/transport timeouts at most
+three times with exponential backoff plus jitter, honors `Retry-After`, and
+never retries ordinary 4xx. Its result records status, bytes, elapsed time,
+attempts, and errors. `crawl.log` records each URL's outcome and retry.
+Malformed HTML cannot stall the network loop: HTML parsing and JSONL file
+writes use `asyncio.to_thread`; `robots.txt` parsing also runs off-loop.
+Tests run with `asyncio.run(..., debug=True)` and `httpx.MockTransport`.
+Local validation: **144 tests passed**, **84% whole-package coverage**,
+strict pyright **0 errors**, and both Ruff checks passed. The built wheel was
+installed outside the repository; its `crawl --help` and previous CLI smoke
+checks passed.
+
+## Permission and reproducible benchmark
+
+All measured pages came from a **generated local mirror** served by
+`httpx.MockTransport`. We own its responses; the benchmark makes **no external
+requests**. Its seed is `https://mirror.test/`, with 199 linked pages spread
+across 20 simulated hosts under `mirror.test`. Each response has 30 ms of
+async simulated network latency and permits access in `robots.txt`. All three
+configurations used the same seed, 200-page budget, per-host concurrency of
+two, and 10 ms minimum start interval. On an Intel Core i5-12500H (12 physical,
+16 logical cores), Windows 11, Python 3.14.7, each configuration had one
+warmup and three measured runs. The table reports medians; raw repetitions
+and spread are in [`benchmarks/lab06.json`](benchmarks/lab06.json). RSS is the
+sampled peak of the parent process. Reproduce without network access:
+
+```bash
+uv run --locked python scripts/benchmark_crawl.py
+```
+
+| Concurrency | Pages | Wall, s | Pages/s | Final errors | Peak RSS, MB |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 200 | 10.342 | 19.339 | 0 | 36.496 |
+| 5 | 200 | 2.183 | 91.613 | 0 | 36.730 |
+| 20 | 200 | 0.669 | 299.157 | 0 | 37.215 |
+
+The same benchmark script makes one extra 20-page proof run with a simulated
+429. [`benchmarks/lab06-crawl-evidence.txt`](benchmarks/lab06-crawl-evidence.txt)
+shows these consecutive lines (the backoff includes jitter):
+
+```text
+INFO url=https://h17.mirror.test/page/17 status=429 bytes=0 attempt=1
+WARNING url=https://h17.mirror.test/page/17 status=429 retry_in=0.32s
+INFO url=https://h17.mirror.test/page/17 status=200 bytes=56 attempt=2
+```
+
+The retry succeeded, so final errors remained zero. This is not a benchmark
+of the public internet: latency and availability are controlled. It isolates
+the scheduling effect and makes the comparison repeatable without crawling
+someone else's site.
+
+Concurrency 20 was about 15.5× faster than concurrency 1 on this waiting-heavy
+workload, despite using one event-loop thread. At each `await` on HTTP or a
+timer, another task can run. Lab 05's normal threaded *indexer* did not scale
+because tokenization and dictionary updates are CPU-bound Python work under
+the GIL; an async crawler instead overlaps I/O waits. Per-host limits and
+delays cost some throughput (the curve is below ideal 20×) but prevent a burst
+against one server, so they are intentional. Parsing large HTML or indexing
+inside the coroutine would block every worker; both are kept off the loop.

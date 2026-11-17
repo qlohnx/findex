@@ -20,6 +20,8 @@ def test_crawl_jsonl_is_streamed_into_corpus(tmp_path) -> None:
         (1, "https://example.test/a", "Python search"),
         (2, "https://example.test/b", "Async crawler"),
     ]
+
+
 @pytest.mark.parametrize("line", ["not json", "[]", '{"url": "x", "text": "y"}'])
 def test_invalid_crawl_jsonl_is_rejected(tmp_path, line) -> None:
     path = tmp_path / "crawl.jsonl"
