@@ -12,6 +12,8 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from rich.text import Text
+
 
 def main() -> None:
     wheel = Path(sys.argv[1]).resolve()
@@ -46,7 +48,7 @@ def main() -> None:
             )
 
         assert "Usage" in run("--help").stdout
-        assert "--max-pages" in run("crawl", "--help").stdout
+        assert "--max-pages" in Text.from_ansi(run("crawl", "--help").stdout).plain
         corpus = root / "corpus"
         corpus.mkdir()
         (corpus / "one.txt").write_text("Python search engine", encoding="utf-8")

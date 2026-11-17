@@ -3,6 +3,7 @@ import importlib
 import json
 
 import httpx
+from rich.text import Text
 from typer.testing import CliRunner
 
 from findex.cli import _crawl_to_jsonl, app
@@ -13,9 +14,9 @@ from findex.store import load_index
 
 def test_crawl_help_and_invalid_seed(tmp_path) -> None:
     runner = CliRunner()
-    help_result = runner.invoke(app, ["crawl", "--help"])
+    help_result = runner.invoke(app, ["crawl", "--help"], color=True)
     assert help_result.exit_code == 0
-    assert "--max-pages" in help_result.stdout
+    assert "--max-pages" in Text.from_ansi(help_result.stdout).plain
     result = runner.invoke(
         app,
         [
