@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from findex.index import InvertedIndex
 from findex.store import save_index
-from scripts.benchmark_web_server import app
+from findex.web.benchmark import app
 
 
 def test_sync_and_async_benchmark_routes_match(

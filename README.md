@@ -706,7 +706,7 @@ The three local runs used the same 100-document slice of the Simple English
 Wikipedia dump, indexed with `--positions`, and the same query (`the`, which
 matched 86 documents). Each run sent 50 concurrent HTTP clients for 10 seconds
 on Windows 11 / Python 3.14.7 with `oha 1.17.0`. The benchmark-only
-[`scripts/benchmark_web_server.py`](scripts/benchmark_web_server.py) exposes
+[`src/findex/web/benchmark.py`](src/findex/web/benchmark.py) exposes
 the *same* scoring code as `/search-async` for the deliberately blocking
 `async def` comparison; the shipped `/search` route stays synchronous.
 The raw `oha` reports are in [`benchmarks/`](benchmarks/).
@@ -735,7 +735,7 @@ for your platform, then use two terminals:
 ```powershell
 uv run --locked findex index data/ --out data/lab07-benchmark.json --limit 100 --positions
 $env:INDEX_PATH = (Resolve-Path data/lab07-benchmark.json).Path
-uv run --locked uvicorn scripts.benchmark_web_server:app --host 127.0.0.1 --port 8000 --workers 1 --no-access-log
+uv run --locked uvicorn findex.web.benchmark:app --host 127.0.0.1 --port 8000 --workers 1 --no-access-log
 ```
 
 ```powershell

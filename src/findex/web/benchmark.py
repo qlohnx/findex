@@ -1,7 +1,7 @@
-"""Benchmark-only ASGI app exposing a deliberately blocking async search route.
+"""Benchmark-only ASGI app with a deliberately blocking async search route.
 
-Run with ``uvicorn scripts.benchmark_web_server:app --workers 1`` or ``--workers 4``.
-The real service remains ``findex.web:app`` and uses the sync /search route.
+Run with ``uvicorn findex.web.benchmark:app --workers 1`` or ``--workers 4``.
+The production app remains ``findex.web:app`` and uses the sync /search route.
 """
 
 from typing import Annotated, Literal
