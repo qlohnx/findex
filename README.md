@@ -1,4 +1,4 @@
-# Findex — Memory-Efficient Search Engine (Lab-01–Lab-06)
+# Findex — Memory-Efficient Search Engine (Lab-01–Lab-07)
 
 [![CI](https://github.com/qlohnx/findex/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/qlohnx/findex/actions/workflows/ci.yml)
 
@@ -9,6 +9,8 @@ Lab 04 provides an installable `findex` CLI; the earlier `python -m` commands
 and the Lab 01–03 results below are retained.
 Lab 05 adds local serial, threaded, and process-based index construction.
 Lab 06 adds an async crawler whose JSONL output feeds the same indexer.
+Lab 07 adds a local search API and browser UI. Public deployment and external
+load testing are still pending; there is no live URL yet.
 
 ```bash
 uv sync --locked --dev
@@ -47,6 +49,7 @@ Use double quotes around the whole query in PowerShell when convenient.
 - `src/findex/ranking.py` — TF-IDF, BM25, timed search, caching, results, and snippets.
 - `src/findex/parallel.py` — disk-backed chunks, partial indexes, and ordered merge for three executors.
 - `src/findex/crawler/` — bounded async URL frontier, polite fetching, robots cache, and HTML extraction.
+- `src/findex/web/` — FastAPI routes, validated settings, Jinja templates, and static CSS.
 
 ## Definition of Done Verification
 
@@ -638,3 +641,135 @@ the GIL; an async crawler instead overlaps I/O waits. Per-host limits and
 delays cost some throughput (the curve is below ideal 20×) but prevent a burst
 against one server, so they are intentional. Parsing large HTML or indexing
 inside the coroutine would block every worker; both are kept off the loop.
+
+---
+
+# Lab 07 — Search on the Web (in progress)
+
+The FastAPI service loads one saved index at startup, uses validated
+environment settings, and closes the index on shutdown. Search stays a plain
+`def` route so FastAPI runs the CPU-bound ranking code in its thread pool.
+JSON responses use Pydantic models; the internal index and ranking dataclasses
+remain unchanged. Each response carries an `X-Request-ID`; unexpected errors
+are logged with that ID and returned as a clean JSON 500.
+
+Create an index first, then start the API and browser UI in PowerShell:
+
+```powershell
+uv sync --locked --dev
+uv run --locked findex index data/test.txt --out data/web-index.json --positions
+$env:INDEX_PATH = (Resolve-Path data/web-index.json).Path
+uv run --locked findex serve --port 8000
+```
+
+For local configuration, copy [`.env.example`](.env.example) to `.env` and
+adjust `INDEX_PATH`; `.env` is ignored by Git. `PORT` and `LOG_LEVEL` are also
+read from the environment. `--port` overrides `PORT` for `findex serve`.
+
+Visit `http://127.0.0.1:8000/` for the search page and
+`http://127.0.0.1:8000/docs` for interactive OpenAPI documentation.
+`GET /search` accepts `q` (1–200 characters), `k` (1–100), `scorer`
+(`bm25` or `tfidf`), and `page` (1–1000); it returns a result page and total
+match count. `GET /docs/{doc_id}` returns a document, `GET /stats` reports
+index counts and uptime, and `GET /health` returns 503 before loading. The
+HTML page has snippet highlighting, result pagination, and a document view at
+`GET /doc/{doc_id}`. A document's full text is shown only if the saved index
+contains it; it is never loaded from an arbitrary path on request.
+
+## Handler choice: 20 concurrent requests
+
+Reproduce the M2 comparison with `uv run --locked python
+scripts/benchmark_web_handlers.py`. It builds a synthetic 1,500-document
+in-memory index, then issues 20 simultaneous in-process ASGI requests, with
+six searches per request, one warmup and three measured trials. The figures
+are medians of the three trials on Windows 11 / Python 3.14.7. This is not
+a network load test or an `oha` run.
+
+| Handler | Wall (ms) | p50 (ms) | p95 (ms) | Max event-loop lag (ms) |
+|---|---:|---:|---:|---:|
+| `def` (thread-pool offload) | 298.75 | 297.03 | 298.62 | 209.14 |
+| blocking `async def` | 344.71 | 169.94 | 326.72 | 334.67 |
+
+The blocking `async def` returned early requests sooner, but it serialized
+CPU work on the event loop and delayed other coroutines for roughly 335 ms.
+The `def` route kept the loop more responsive and had a slightly better p95
+in this run, although its p50 was worse due to thread scheduling and the GIL.
+This comparison is small and noisy; it supports the correctness choice to
+offload blocking work, not a general claim that threads make CPU ranking
+parallel or faster. Multiple Uvicorn workers would use separate processes
+and GILs, as in Lab 05; Lab 06's async crawler instead benefits from
+overlapping network waits.
+
+## Local HTTP load test with `oha`
+
+The three local runs used the same 100-document slice of the Simple English
+Wikipedia dump, indexed with `--positions`, and the same query (`the`, which
+matched 86 documents). Each run sent 50 concurrent HTTP clients for 10 seconds
+on Windows 11 / Python 3.14.7 with `oha 1.17.0`. The benchmark-only
+[`scripts/benchmark_web_server.py`](scripts/benchmark_web_server.py) exposes
+the *same* scoring code as `/search-async` for the deliberately blocking
+`async def` comparison; the shipped `/search` route stays synchronous.
+The raw `oha` reports are in [`benchmarks/`](benchmarks/).
+
+| Local target | Route | Concurrency | RPS | p50 (ms) | p95 (ms) | p99 (ms) |
+|---|---|---:|---:|---:|---:|---:|
+| 1 worker, `def` | `/search` | 50 | 543.06 | 89.783 | 107.721 | 143.193 |
+| 1 worker, blocking `async def` | `/search-async` | 50 | 616.69 | 78.404 | 93.321 | 127.100 |
+| 4 workers, `def` | `/search` | 50 | 1191.85 | 40.065 | 62.015 | 70.643 |
+| deployed | `/search` | 20 | — | — | — | — |
+
+On this **small** index, avoiding thread-pool overhead made the blocking async
+route faster in raw search throughput. It still monopolizes its worker's event
+loop during each request; the separate M2 experiment measured worse loop lag.
+Four worker processes improved throughput by 2.19× versus the single sync
+worker and roughly halved p99, since they can execute Python scoring on
+separate cores with separate GILs. Each process loads its own index, so the
+memory cost rises too. These measurements are local and cannot stand in for
+the deployed row, which also includes network and platform latency.
+
+To reproduce the local runs, first build the same slice:
+
+Install [oha 1.17.0](https://github.com/hatoo/oha/releases/tag/v1.17.0)
+for your platform, then use two terminals:
+
+```powershell
+uv run --locked findex index data/ --out data/lab07-benchmark.json --limit 100 --positions
+$env:INDEX_PATH = (Resolve-Path data/lab07-benchmark.json).Path
+uv run --locked uvicorn scripts.benchmark_web_server:app --host 127.0.0.1 --port 8000 --workers 1 --no-access-log
+```
+
+```powershell
+# Second terminal, while the 1-worker server runs:
+oha -z 10s -c 50 --no-tui --output-format json -o benchmarks/lab07-local-sync.json "http://127.0.0.1:8000/search?q=the"
+oha -z 10s -c 50 --no-tui --output-format json -o benchmarks/lab07-local-async.json "http://127.0.0.1:8000/search-async?q=the"
+# Restart Uvicorn with --workers 4, then:
+oha -z 10s -c 50 --no-tui --output-format json -o benchmarks/lab07-local-4workers.json "http://127.0.0.1:8000/search?q=the"
+```
+
+## Container and remaining work
+
+The multi-stage [`Dockerfile`](Dockerfile) installs locked production
+dependencies with uv, copies a non-editable environment into a Python 3.14
+slim image, and runs Uvicorn as a non-root user. It builds a small original
+eight-document demo index from [`demo/corpus/`](demo/corpus/) into the image,
+so the service can start with no external data. To search a larger saved
+index, mount it and override `INDEX_PATH`. Example for PowerShell with
+Docker Desktop:
+
+```powershell
+docker build -t findex:0.7.0 .
+docker run --rm -p 8000:8000 findex:0.7.0   # bundled demo
+docker run --rm -p 8000:8000 -e INDEX_PATH=/data/index.json `
+  --mount "type=bind,source=$((Resolve-Path data).Path),target=/data,readonly" findex:0.7.0
+```
+
+Docker is not installed in the current development environment, so the image
+build and container health check remain unverified locally. The CI workflow
+has a Docker build and HTTP smoke test, but it has not run for this branch.
+An optional [`render.yaml`](render.yaml) prepares a Render Free web service
+with `/health` as its health check and the bundled demo index as its default.
+The container reads the platform's `PORT` setting via `findex serve`.
+Render Free may spin down after idle time, so warm the service before a
+deployed load test. A public deployment, observed platform logs, and the
+deployed `oha` row are still pending. No public URL or `lab-07` tag is
+claimed yet.
