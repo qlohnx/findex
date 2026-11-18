@@ -1,0 +1,14 @@
+.git
+.venv
+.cache
+.pytest_cache
+.ruff_cache
+.hypothesis
+__pycache__
+*.pyc
+data
+dist
+build
+*.egg-info
+.env
+coverage.xml

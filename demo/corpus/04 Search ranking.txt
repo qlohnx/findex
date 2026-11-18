@@ -1,0 +1,1 @@
+BM25 ranks documents using term frequency, document frequency, and document length. TF-IDF is another ranking option. A higher score does not guarantee that a page is useful, but it helps put promising documents near the top. Search results include a short snippet with matched terms highlighted.

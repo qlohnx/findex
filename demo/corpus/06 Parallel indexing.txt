@@ -1,0 +1,1 @@
+Building a search index is CPU-heavy because Python code tokenizes text and updates dictionaries. Threads can share memory, but the ordinary interpreter's GIL limits parallel execution of Python bytecode. Multiple processes have separate interpreters and can use several cores, although startup, serialization, and merging add overhead.

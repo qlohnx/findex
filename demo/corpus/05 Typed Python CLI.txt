@@ -1,0 +1,1 @@
+Python type hints make the search engine's interfaces easier to understand and check. A Typer command-line interface turns annotated functions into commands for indexing, crawling, searching, and serving the web API. Tests and strict static type checks catch different kinds of mistakes before a release.

@@ -1,0 +1,1 @@
+FastAPI exposes the Python search engine over HTTP. Pydantic validates request parameters and serializes response models, while lifespan startup loads the index once for all requests in a worker. The browser page renders search results with Jinja templates. A health endpoint confirms that the index is ready before a deployment platform sends traffic.

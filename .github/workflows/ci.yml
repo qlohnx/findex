@@ -26,7 +26,7 @@ jobs:
       - run: uv run --locked pyright
       - run: uv run --locked pytest --cov=findex --cov-report=term-missing --cov-report=xml
       - run: uv build
-      - run: uv run --locked python scripts/check_wheel.py dist/findex-0.4.0-py3-none-any.whl
+      - run: uv run --locked python scripts/check_wheel.py dist/findex-0.7.0-py3-none-any.whl
       - uses: actions/upload-artifact@v4
         with:
           name: findex-${{ matrix.os }}
@@ -36,9 +36,56 @@ jobs:
           name: coverage-${{ matrix.os }}
           path: coverage.xml
 
-  release:
-    if: github.ref == 'refs/tags/v0.4.0'
+  container:
     needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.13"
+          python-version: "3.14"
+          enable-cache: true
+      - run: uv sync --locked --dev
+      - name: Build a tiny index for the container smoke test
+        run: uv run --locked findex index tests/fixtures/web-smoke.txt --out "$RUNNER_TEMP/index.json"
+      - run: docker build --tag findex:ci .
+      - name: Verify bundled demo index
+        run: |
+          docker run --detach --name findex-demo --publish 127.0.0.1:8001:8000 findex:ci
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8001/health > /dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl --fail --silent 'http://127.0.0.1:8001/search?q=python' | jq -e '.total >= 4'
+      - name: Start the non-root container with a mounted index
+        run: >-
+          docker run --detach --name findex-ci --publish 127.0.0.1:8000:8000
+          --mount "type=bind,source=$RUNNER_TEMP/index.json,target=/data/index.json,readonly"
+          --env INDEX_PATH=/data/index.json findex:ci
+      - name: Verify health and search over HTTP
+        run: |
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8000/health > /dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:8000/health | jq -e '.status == "ok"'
+          curl --fail --silent 'http://127.0.0.1:8000/search?q=python' | jq -e '.total == 1'
+      - name: Stop container
+        if: always()
+        run: |
+          docker logs findex-demo || true
+          docker stop findex-demo || true
+          docker logs findex-ci || true
+          docker stop findex-ci || true
+
+  release:
+    if: github.ref == 'refs/tags/v0.7.0'
+    needs: [check, container]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -51,7 +98,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
-          gh release create v0.4.0 artifacts/*.whl artifacts/*.tar.gz
+          gh release create v0.7.0 artifacts/*.whl artifacts/*.tar.gz
           --repo "${{ github.repository }}"
-          --title "findex v0.4.0"
-          --notes "Typed and tested CLI: BM25/TF-IDF, JSON Lines, logging, and installable distributions."
+          --title "findex v0.7.0"
+          --notes "Search API and web UI built on the indexed corpus."

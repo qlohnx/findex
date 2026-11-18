@@ -1,0 +1,1 @@
+An asynchronous web crawler overlaps network waiting across many pages. It checks robots rules, limits requests per host, adds a delay between starts, and retries temporary failures with backoff. Crawl results are written as JSON Lines so the same indexer can consume them later. Parsing and indexing do not block the crawler's event loop.

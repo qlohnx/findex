@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Findex — Search</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+</head>
+<body>
+  <main class="shell">
+    <header class="masthead">
+      <a class="brand" href="/">findex<span class="brand-dot">.</span></a>
+      <a class="api-link" href="/docs">API documentation ↗</a>
+    </header>
+
+    <section class="hero">
+      <p class="eyebrow">YOUR CORPUS, SEARCHABLE</p>
+      <h1>Find the right<br><em>document.</em></h1>
+      <p class="intro">Explore your indexed collection with ranked search.</p>
+      <form action="/" method="get" role="search" class="search-form">
+        <label for="q" class="sr-only">Search documents</label>
+        <input id="q" name="q" type="search" value="{{ query }}" maxlength="200" placeholder="Search for anything…" required autofocus>
+        <input type="hidden" name="k" value="{{ k }}">
+        <label for="scorer" class="sr-only">Ranking algorithm</label>
+        <select id="scorer" name="scorer" aria-label="Ranking algorithm">
+          <option value="bm25" {% if scorer == 'bm25' %}selected{% endif %}>BM25</option>
+          <option value="tfidf" {% if scorer == 'tfidf' %}selected{% endif %}>TF-IDF</option>
+        </select>
+        <button type="submit">Search <span aria-hidden="true">→</span></button>
+      </form>
+      <p class="tip">Try <code>python AND search</code> or a phrase in quotes.</p>
+    </section>
+
+    {% if error %}<p class="notice" role="alert">{{ error }}</p>{% endif %}
+    {% if found %}
+    <section class="results" aria-live="polite">
+      <div class="results-head">
+        <h2>Results</h2>
+        <span>{{ found.total }} found · {{ '%.1f'|format(found.took_ms) }} ms</span>
+      </div>
+      {% if found.results %}
+        <ol class="result-list" start="{{ (found.page - 1) * found.k + 1 }}">
+          {% for result in found.results %}
+          <li class="result">
+            <div class="result-top"><span>DOCUMENT {{ result.doc_id }}</span><span>{{ '%.3f'|format(result.score) }} score</span></div>
+            <h3><a href="{{ url_for('document_page', doc_id=result.doc_id) }}">{{ result.title }}</a></h3>
+            {% if result.snippet %}<p class="snippet">{{ result.snippet|highlight_snippet }}</p>{% endif %}
+          </li>
+          {% endfor %}
+        </ol>
+      {% else %}
+        <p class="empty">No results on this page. Try another query or go back.</p>
+      {% endif %}
+      <nav class="pagination" aria-label="Result pages">
+        {% if previous_url %}<a href="{{ previous_url }}">← Previous</a>{% endif %}
+        <span>Page {{ found.page }}</span>
+        {% if next_url %}<a href="{{ next_url }}">Next →</a>{% endif %}
+      </nav>
+    </section>
+    {% endif %}
+    <footer>Built with Python · FastAPI · Findex</footer>
+  </main>
+</body>
+</html>

@@ -1,13 +1,21 @@
 [project]
 name = "findex"
-version = "0.4.0"
+version = "0.7.0"
 description = "A streaming, typed search engine with Boolean queries, TF-IDF and BM25 ranking"
 readme = "README.md"
 authors = [
     { name = "Daniil", email = "daniilsova0407@gmail.com" }
 ]
 requires-python = ">=3.14"
-dependencies = ["typer>=0.27.3,<1", "rich>=14,<15", "httpx>=0.28,<1"]
+dependencies = [
+    "typer>=0.27.3,<1",
+    "rich>=14,<15",
+    "httpx>=0.28,<1",
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.30,<1",
+    "pydantic-settings>=2,<3",
+    "jinja2>=3.1,<4",
+]
 
 [project.urls]
 Repository = "https://github.com/qlohnx/findex"

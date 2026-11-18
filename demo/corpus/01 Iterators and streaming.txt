@@ -1,0 +1,1 @@
+Python generators produce one value at a time. A streaming corpus reader can parse a large document collection without keeping every document in memory. The search engine reads each page, tokenizes it, and releases the parsed input before moving to the next page. This keeps the intake memory footprint much smaller than an eager list of all pages.

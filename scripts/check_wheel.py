@@ -1,6 +1,6 @@
 """Install a wheel in isolated uv tool directories and exercise its CLI.
 
-Usage: uv run python scripts/check_wheel.py dist/findex-0.4.0-py3-none-any.whl
+Usage: uv run python scripts/check_wheel.py dist/findex-0.7.0-py3-none-any.whl
 The user's tools and PATH are left untouched.
 """
 
@@ -18,8 +18,15 @@ from rich.text import Text
 def main() -> None:
     wheel = Path(sys.argv[1]).resolve()
     with zipfile.ZipFile(wheel) as archive:
-        assert "findex/py.typed" in archive.namelist()
-        entry_points = archive.read("findex-0.4.0.dist-info/entry_points.txt").decode()
+        names = archive.namelist()
+        assert "findex/py.typed" in names
+        assert "findex/web/templates/index.html" in names
+        assert "findex/web/templates/document.html" in names
+        assert "findex/web/static/style.css" in names
+        entry_points_file = next(
+            name for name in names if name.endswith(".dist-info/entry_points.txt")
+        )
+        entry_points = archive.read(entry_points_file).decode()
         assert "findex = findex.cli:app" in entry_points
 
     with tempfile.TemporaryDirectory(prefix="findex-wheel-") as directory:
@@ -49,6 +56,7 @@ def main() -> None:
 
         assert "Usage" in run("--help").stdout
         assert "--max-pages" in Text.from_ansi(run("crawl", "--help").stdout).plain
+        assert "--workers" in Text.from_ansi(run("serve", "--help").stdout).plain
         corpus = root / "corpus"
         corpus.mkdir()
         (corpus / "one.txt").write_text("Python search engine", encoding="utf-8")
@@ -78,7 +86,7 @@ def main() -> None:
             ]
             assert len(rows) == 1 and rows[0]["doc_id"] == 1
         print(
-            "Wheel installed outside the repository: crawl help, serial/process indexing, stats, and both scorers passed."
+            "Wheel installed in an isolated tool directory: web assets, serve/crawl help, serial/process indexing, stats, and both scorers passed."
         )
 
 

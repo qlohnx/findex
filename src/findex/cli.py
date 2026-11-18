@@ -19,6 +19,7 @@ from xml.etree.ElementTree import ParseError
 
 import httpx
 import typer
+from pydantic import ValidationError
 from rich.console import Console
 from rich.live import Live
 from rich.progress import track
@@ -88,6 +89,7 @@ def _expected_errors() -> Generator[None]:
         EOFError,
         pickle.UnpicklingError,
         ParseError,
+        ValidationError,
     ) as exc:
         message = " ".join(str(exc).splitlines())
         typer.echo(f"Error: {message}", err=True)
@@ -394,6 +396,35 @@ def stats_command(
         console = Console()
         console.print(table)
         console.print(terms)
+
+
+@app.command("serve")
+def serve_command(
+    port: Annotated[
+        int | None,
+        typer.Option("--port", min=1, max=65535, help="HTTP port (defaults to PORT)."),
+    ] = None,
+    workers: Annotated[
+        int, typer.Option("--workers", min=1, help="Uvicorn worker processes.")
+    ] = 1,
+    host: Annotated[
+        str, typer.Option("--host", help="Bind address; use 0.0.0.0 in containers.")
+    ] = "127.0.0.1",
+) -> None:
+    """Serve the search API and web UI using INDEX_PATH from the environment."""
+    import uvicorn
+
+    from findex.web.config import Settings
+
+    with _expected_errors():
+        settings = Settings()  # pyright: ignore[reportCallIssue]
+        uvicorn.run(
+            "findex.web:app",
+            host=host,
+            port=port if port is not None else settings.port,
+            workers=workers,
+            log_level=settings.log_level,
+        )
 
 
 if __name__ == "__main__":

@@ -1,0 +1,1 @@
+Boolean search combines posting lists with AND, OR, and NOT. Intersecting sorted lists finds documents containing both terms, while a union finds documents containing either term. A parser handles parentheses and quoted phrases, so a user can express more precise information needs than a single keyword.

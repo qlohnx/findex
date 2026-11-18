@@ -1,0 +1,1 @@
+An inverted index maps a term to the documents where that term appears. Each posting records a document identifier and term frequency. Optional token positions let the search engine answer phrase queries. The index also stores document titles, lengths, and text for ranking and result snippets.

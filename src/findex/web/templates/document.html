@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ doc.title or doc.path }} — Findex</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+</head>
+<body>
+  <main class="shell document-shell">
+    <header class="masthead">
+      <a class="brand" href="/">findex<span class="brand-dot">.</span></a>
+      <a class="api-link" href="/docs">API documentation ↗</a>
+    </header>
+    <a class="back-link" href="/">← Back to search</a>
+    <p class="eyebrow">DOCUMENT {{ doc.doc_id }}</p>
+    <h1>{{ doc.title or doc.path }}</h1>
+    <p class="source">{{ doc.path }}</p>
+    {% if doc.text %}<article class="document-text">{{ doc.text }}</article>
+    {% else %}<p class="notice">Full text is not available in this index.</p>{% endif %}
+    <footer>Built with Python · FastAPI · Findex</footer>
+  </main>
+</body>
+</html>
