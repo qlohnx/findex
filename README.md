@@ -764,8 +764,11 @@ docker run --rm -p 8000:8000 -e INDEX_PATH=/data/index.json `
 ```
 
 Docker is not installed in the current development environment, so the image
-build and container health check remain unverified locally. The CI workflow
-has a Docker build and HTTP smoke test, but it has not run for this branch.
+build and container health check remain unverified locally. In
+[the lab-07 GitHub CI run](https://github.com/qlohnx/findex/actions/runs/44302775727),
+Ubuntu and Windows checks passed; the Ubuntu container job built the image,
+started both its bundled demo and a mounted-index instance, and verified
+`/health` and `/search` over HTTP.
 An optional [`render.yaml`](render.yaml) prepares a Render Free web service
 with `/health` as its health check and the bundled demo index as its default.
 The container reads the platform's `PORT` setting via `findex serve`.
