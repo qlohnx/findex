@@ -1,5 +1,7 @@
 # Findex — Memory-Efficient Search Engine (Lab-01–Lab-07)
 
+**Live demo:** [findex-search-demo.onrender.com](https://findex-search-demo.onrender.com/) · [interactive API docs](https://findex-search-demo.onrender.com/docs)
+
 [![CI](https://github.com/qlohnx/findex/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/qlohnx/findex/actions/workflows/ci.yml)
 
 A lightweight, memory-efficient search engine component built in Python to process large XML-based Wikipedia dumps with a minimal RAM footprint.
@@ -9,8 +11,8 @@ Lab 04 provides an installable `findex` CLI; the earlier `python -m` commands
 and the Lab 01–03 results below are retained.
 Lab 05 adds local serial, threaded, and process-based index construction.
 Lab 06 adds an async crawler whose JSONL output feeds the same indexer.
-Lab 07 adds a local search API and browser UI. Public deployment and external
-load testing are still pending; there is no live URL yet.
+Lab 07 adds a search API and browser UI, deployed on Render Free with an
+original eight-document demonstration corpus.
 
 ```bash
 uv sync --locked --dev
@@ -644,7 +646,7 @@ inside the coroutine would block every worker; both are kept off the loop.
 
 ---
 
-# Lab 07 — Search on the Web (in progress)
+# Lab 07 — Search on the Web
 
 The FastAPI service loads one saved index at startup, uses validated
 environment settings, and closes the index on shutdown. Search stays a plain
@@ -700,53 +702,58 @@ parallel or faster. Multiple Uvicorn workers would use separate processes
 and GILs, as in Lab 05; Lab 06's async crawler instead benefits from
 overlapping network waits.
 
-## Local HTTP load test with `oha`
+## Local and deployed HTTP load tests with `oha`
 
-The three local runs used the same 100-document slice of the Simple English
-Wikipedia dump, indexed with `--positions`, and the same query (`the`, which
-matched 86 documents). Each run sent 50 concurrent HTTP clients for 10 seconds
-on Windows 11 / Python 3.14.7 with `oha 1.17.0`. The benchmark-only
+All four runs used the same eight-document corpus in [`demo/corpus/`](demo/corpus/)
+and query `python` (four matching documents). The local runs sent 50 concurrent
+HTTP clients for 10 seconds on Windows 11 / Python 3.14.7; the Render Free
+run used 20 concurrent clients for 10 seconds after warming the service.
+`oha 1.17.0` used `-w` to finish requests already started at the deadline.
+Every completed response was HTTP 200, with no transport errors. The benchmark-only
 [`src/findex/web/benchmark.py`](src/findex/web/benchmark.py) exposes
 the *same* scoring code as `/search-async` for the deliberately blocking
 `async def` comparison; the shipped `/search` route stays synchronous.
 The raw `oha` reports are in [`benchmarks/`](benchmarks/).
 
-| Local target | Route | Concurrency | RPS | p50 (ms) | p95 (ms) | p99 (ms) |
+| Target | Route | Concurrency | RPS | p50 (ms) | p95 (ms) | p99 (ms) |
 |---|---|---:|---:|---:|---:|---:|
-| 1 worker, `def` | `/search` | 50 | 543.06 | 89.783 | 107.721 | 143.193 |
-| 1 worker, blocking `async def` | `/search-async` | 50 | 616.69 | 78.404 | 93.321 | 127.100 |
-| 4 workers, `def` | `/search` | 50 | 1191.85 | 40.065 | 62.015 | 70.643 |
-| deployed | `/search` | 20 | — | — | — | — |
+| local, 1 worker, `def` | `/search` | 50 | 1344.60 | 35.729 | 45.113 | 60.103 |
+| local, 1 worker, blocking `async def` | `/search-async` | 50 | 1674.03 | 28.865 | 35.749 | 47.777 |
+| local, 4 workers, `def` | `/search` | 50 | 3162.65 | 15.173 | 23.800 | 27.509 |
+| Render Free, 1 worker | `/search` | 20 | 67.76 | 295.205 | 405.177 | 545.548 |
 
 On this **small** index, avoiding thread-pool overhead made the blocking async
 route faster in raw search throughput. It still monopolizes its worker's event
 loop during each request; the separate M2 experiment measured worse loop lag.
-Four worker processes improved throughput by 2.19× versus the single sync
-worker and roughly halved p99, since they can execute Python scoring on
+Four worker processes improved throughput by 2.35× versus the single sync
+worker and more than halved p99, since they can execute Python scoring on
 separate cores with separate GILs. Each process loads its own index, so the
-memory cost rises too. These measurements are local and cannot stand in for
-the deployed row, which also includes network and platform latency.
+memory cost rises too. The deployed row is slower, but it combines network
+latency, Render Free's smaller CPU allocation, and different concurrency;
+these data alone cannot attribute the difference to one cause or compare
+server-only throughput directly.
 
-To reproduce the local runs, first build the same slice:
+To reproduce the local runs, first build the same demo index:
 
 Install [oha 1.17.0](https://github.com/hatoo/oha/releases/tag/v1.17.0)
 for your platform, then use two terminals:
 
 ```powershell
-uv run --locked findex index data/ --out data/lab07-benchmark.json --limit 100 --positions
-$env:INDEX_PATH = (Resolve-Path data/lab07-benchmark.json).Path
+uv run --locked findex index demo/corpus --out data/lab07-demo.json --positions
+$env:INDEX_PATH = (Resolve-Path data/lab07-demo.json).Path
 uv run --locked uvicorn findex.web.benchmark:app --host 127.0.0.1 --port 8000 --workers 1 --no-access-log
 ```
 
 ```powershell
 # Second terminal, while the 1-worker server runs:
-oha -z 10s -c 50 --no-tui --output-format json -o benchmarks/lab07-local-sync.json "http://127.0.0.1:8000/search?q=the"
-oha -z 10s -c 50 --no-tui --output-format json -o benchmarks/lab07-local-async.json "http://127.0.0.1:8000/search-async?q=the"
+oha -z 10s -c 50 -w --no-tui --output-format json -o benchmarks/lab07-local-sync.json "http://127.0.0.1:8000/search?q=python"
+oha -z 10s -c 50 -w --no-tui --output-format json -o benchmarks/lab07-local-async.json "http://127.0.0.1:8000/search-async?q=python"
 # Restart Uvicorn with --workers 4, then:
-oha -z 10s -c 50 --no-tui --output-format json -o benchmarks/lab07-local-4workers.json "http://127.0.0.1:8000/search?q=the"
+oha -z 10s -c 50 -w --no-tui --output-format json -o benchmarks/lab07-local-4workers.json "http://127.0.0.1:8000/search?q=python"
+oha -z 10s -c 20 -w --no-tui --output-format json -o benchmarks/lab07-deployed.json "https://findex-search-demo.onrender.com/search?q=python"
 ```
 
-## Container and remaining work
+## Container and deployment
 
 The multi-stage [`Dockerfile`](Dockerfile) installs locked production
 dependencies with uv, copies a non-editable environment into a Python 3.14
@@ -773,6 +780,6 @@ An optional [`render.yaml`](render.yaml) prepares a Render Free web service
 with `/health` as its health check and the bundled demo index as its default.
 The container reads the platform's `PORT` setting via `findex serve`.
 Render Free may spin down after idle time, so warm the service before a
-deployed load test. A public deployment, observed platform logs, and the
-deployed `oha` row are still pending. No public URL or `lab-07` tag is
-claimed yet.
+deployed load test. The Free service is deployed from the `lab-07` branch;
+Render's deploy log reported a successful build and a live service. Its
+public `/health`, `/search`, `/docs`, and home page were checked directly.
