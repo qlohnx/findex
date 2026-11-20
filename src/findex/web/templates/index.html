@@ -21,6 +21,12 @@
         <label for="q" class="sr-only">Search documents</label>
         <input id="q" name="q" type="search" value="{{ query }}" maxlength="200" placeholder="Search for anything…" required autofocus>
         <input type="hidden" name="k" value="{{ k }}">
+        <label for="mode" class="sr-only">Search mode</label>
+        <select id="mode" name="mode" aria-label="Search mode">
+          <option value="keyword" {% if mode == 'keyword' %}selected{% endif %}>Keyword</option>
+          <option value="semantic" {% if mode == 'semantic' %}selected{% endif %}>Semantic</option>
+          <option value="hybrid" {% if mode == 'hybrid' %}selected{% endif %}>Hybrid</option>
+        </select>
         <label for="scorer" class="sr-only">Ranking algorithm</label>
         <select id="scorer" name="scorer" aria-label="Ranking algorithm">
           <option value="bm25" {% if scorer == 'bm25' %}selected{% endif %}>BM25</option>

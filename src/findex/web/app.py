@@ -22,6 +22,13 @@ from findex.index import Index
 from findex.query import parse
 from findex.ranking import BM25, TfIdf
 from findex.ranking import search as ranked_search
+from findex.semantic import (
+    SemanticStore,
+    default_prefix,
+    embedding_paths,
+    rrf_fuse,
+    semantic_search,
+)
 from findex.store import load_index
 from findex.web.config import Settings
 from findex.web.models import (
@@ -53,13 +60,33 @@ def search_index(
     k: int,
     scorer: Literal["bm25", "tfidf"],
     page: int,
+    mode: Literal["keyword", "semantic", "hybrid"] = "keyword",
+    semantic_store: SemanticStore | None = None,
 ) -> SearchResponse:
     started = time.perf_counter()
+    if mode != "keyword" and semantic_store is None:
+        raise HTTPException(
+            status_code=503, detail="Semantic embeddings are not loaded"
+        )
     try:
-        query = parse(query_text)
-        total = len(query.evaluate(index))
-        ranker = BM25() if scorer == "bm25" else TfIdf()
-        top = ranked_search(query, index, ranker, k=min(page * k, total))
+        if mode == "semantic":
+            assert semantic_store is not None
+            total = semantic_store.total_documents
+            top = semantic_search(query_text, index, semantic_store, k=page * k)
+        else:
+            query = parse(query_text)
+            ranker = BM25() if scorer == "bm25" else TfIdf()
+            if mode == "keyword":
+                total = len(query.evaluate(index))
+                top = ranked_search(query, index, ranker, k=min(page * k, total))
+            else:
+                assert semantic_store is not None
+                # A fixed 100-per-mode fusion window keeps pagination stable
+                # without creating snippets for every keyword match.
+                keyword = ranked_search(query, index, ranker, k=100)
+                semantic = semantic_search(query_text, index, semantic_store, k=100)
+                total = len({row.doc_id for row in [*keyword, *semantic]})
+                top = rrf_fuse([keyword, semantic], k=page * k)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     results = [
@@ -95,6 +122,11 @@ def get_settings(request: Request) -> Settings:
     return settings
 
 
+def get_semantic_store(request: Request) -> SemanticStore | None:
+    store = getattr(request.app.state, "semantic_store", None)
+    return store if isinstance(store, SemanticStore) else None
+
+
 def create_app(
     *,
     settings: Settings | None = None,
@@ -107,12 +139,19 @@ def create_app(
         index = index_loader(configured.index_path)
         application.state.settings = configured
         application.state.index = index
+        prefix = default_prefix(configured.index_path)
+        application.state.semantic_store = (
+            SemanticStore.load(prefix, index)
+            if all(path.exists() for path in embedding_paths(prefix))
+            else None
+        )
         application.state.started_at = time.monotonic()
         log.info("loaded %d documents from %s", index.num_docs, configured.index_path)
         try:
             yield
         finally:
             application.state.index = None
+            application.state.semantic_store = None
             index.close()
 
     application = FastAPI(title="Findex search", version="0.7.0", lifespan=lifespan)
@@ -150,10 +189,20 @@ def create_app(
         q: Annotated[str, Query(min_length=1, max_length=200)],
         k: Annotated[int, Query(ge=1, le=100)] = 10,
         scorer: Literal["bm25", "tfidf"] = "bm25",
+        mode: Literal["keyword", "semantic", "hybrid"] = "keyword",
         page: Annotated[int, Query(ge=1, le=1000)] = 1,
         index: Index = Depends(get_index),
+        semantic_store: SemanticStore | None = Depends(get_semantic_store),
     ) -> SearchResponse:
-        return search_index(q, index, k=k, scorer=scorer, page=page)
+        return search_index(
+            q,
+            index,
+            k=k,
+            scorer=scorer,
+            page=page,
+            mode=mode,
+            semantic_store=semantic_store,
+        )
 
     @application.get("/", include_in_schema=False)
     def home(
@@ -161,14 +210,24 @@ def create_app(
         q: Annotated[str, Query(max_length=200)] = "",
         k: Annotated[int, Query(ge=1, le=100)] = 10,
         scorer: Literal["bm25", "tfidf"] = "bm25",
+        mode: Literal["keyword", "semantic", "hybrid"] = "keyword",
         page: Annotated[int, Query(ge=1, le=1000)] = 1,
         index: Index = Depends(get_index),
+        semantic_store: SemanticStore | None = Depends(get_semantic_store),
     ) -> Response:
         found: SearchResponse | None = None
         error: str | None = None
         if q.strip():
             try:
-                found = search_index(q, index, k=k, scorer=scorer, page=page)
+                found = search_index(
+                    q,
+                    index,
+                    k=k,
+                    scorer=scorer,
+                    page=page,
+                    mode=mode,
+                    semantic_store=semantic_store,
+                )
             except HTTPException as exc:
                 error = str(exc.detail)
 
@@ -176,7 +235,9 @@ def create_app(
             return (
                 str(request.url_for("home"))
                 + "?"
-                + urlencode({"q": q, "k": k, "scorer": scorer, "page": number})
+                + urlencode(
+                    {"q": q, "k": k, "scorer": scorer, "mode": mode, "page": number}
+                )
             )
 
         return templates.TemplateResponse(
@@ -186,6 +247,7 @@ def create_app(
                 "query": q,
                 "k": k,
                 "scorer": scorer,
+                "mode": mode,
                 "found": found,
                 "error": error,
                 "previous_url": page_url(page - 1) if page > 1 else None,

@@ -32,6 +32,13 @@ from findex.crawler.urls import canonical_url
 from findex.parallel import build_from_chunks, stage_pages
 from findex.ranking import BM25, Scorer, TfIdf
 from findex.ranking import search as ranked_search
+from findex.semantic import (
+    SemanticStore,
+    build_embeddings,
+    default_prefix,
+    rrf_fuse,
+    semantic_search,
+)
 from findex.stats import iter_pages
 from findex.store import open_index, save_index
 
@@ -341,13 +348,32 @@ def search_command(
     json_output: Annotated[
         bool, typer.Option("--json", help="Emit one JSON object per result.")
     ] = False,
+    mode: Annotated[
+        Literal["keyword", "semantic", "hybrid"],
+        typer.Option("--mode", help="Keyword, semantic, or RRF hybrid retrieval."),
+    ] = "keyword",
+    embeddings: Annotated[
+        Path | None,
+        typer.Option("--embeddings", help="Embedding file prefix."),
+    ] = None,
 ) -> None:
     """Search a saved index and show ranked results with highlighted snippets."""
     with _expected_errors():
         ranking: Scorer = BM25() if scorer == "bm25" else TfIdf()
         with open_index(index_path) as index:
-            results = ranked_search(query, index, ranking, k=k)
-        log.info("returned %d results using %s", len(results), scorer)
+            if mode == "keyword":
+                results = ranked_search(query, index, ranking, k=k)
+            else:
+                store = SemanticStore.load(
+                    embeddings or default_prefix(index_path), index
+                )
+                semantic = semantic_search(query, index, store, k=max(100, k))
+                if mode == "semantic":
+                    results = semantic[:k]
+                else:
+                    keyword = ranked_search(query, index, ranking, k=max(100, k))
+                    results = rrf_fuse([keyword, semantic], k=k)
+        log.info("returned %d results using %s/%s", len(results), mode, scorer)
         if json_output:
             for result in results:
                 row: ResultRow = {
@@ -358,7 +384,7 @@ def search_command(
                 }
                 typer.echo(json.dumps(row, ensure_ascii=False))
             return
-        table = Table(title=f"Search results ({scorer})")
+        table = Table(title=f"Search results ({mode}, {scorer})")
         for column in ("Rank", "Document", "Score", "Title", "Snippet"):
             table.add_column(column)
         for rank, result in enumerate(results, start=1):
@@ -370,6 +396,40 @@ def search_command(
                 _highlight(result.snippet),
             )
         Console().print(table)
+
+
+@app.command("embed")
+def embed_command(
+    index_path: Annotated[Path, typer.Argument(help="Saved index with document text.")],
+    model: Annotated[
+        str, typer.Option("--model", help="Sentence Transformers model name.")
+    ] = "all-MiniLM-L6-v2",
+    out: Annotated[
+        Path | None, typer.Option("--out", help="Output prefix for .npy files.")
+    ] = None,
+    chunk_words: Annotated[
+        int, typer.Option("--chunk-words", min=1, help="Words per passage.")
+    ] = 256,
+    overlap: Annotated[
+        int, typer.Option("--overlap", min=0, help="Overlapping words.")
+    ] = 32,
+    batch_size: Annotated[
+        int, typer.Option("--batch-size", min=1, help="Model batch size.")
+    ] = 32,
+) -> None:
+    """Embed document passages and save normalized NumPy arrays."""
+    with _expected_errors():
+        with open_index(index_path) as index:
+            prefix = out or default_prefix(index_path)
+            count = build_embeddings(
+                index,
+                prefix,
+                model_name=model,
+                chunk_words=chunk_words,
+                overlap=overlap,
+                batch_size=batch_size,
+            )
+        typer.echo(f"Saved {count} normalized chunks to {prefix}.*")
 
 
 @app.command("stats")

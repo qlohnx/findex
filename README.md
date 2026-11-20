@@ -1,10 +1,17 @@
-# Findex — Memory-Efficient Search Engine (Lab-01–Lab-07)
+# Findex — a streaming search engine with ranked and hybrid retrieval
 
 **Live demo:** [findex-search-demo.onrender.com](https://findex-search-demo.onrender.com/) · [interactive API docs](https://findex-search-demo.onrender.com/docs)
 
 [![CI](https://github.com/qlohnx/findex/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/qlohnx/findex/actions/workflows/ci.yml)
 
 A lightweight, memory-efficient search engine component built in Python to process large XML-based Wikipedia dumps with a minimal RAM footprint.
+
+**At a glance:** 5,000 documents in the local ranking benchmark · **4.52×**
+faster three-term warm search with NumPy · **405 ms p95** on Render Free at 20
+concurrent requests (the earlier Lab 07 deployment test). These are different
+workloads and machines; see the measurement details below. The public demo is
+the keyword-search showcase. The `lab-08` branch also includes optional
+semantic and hybrid search.
 
 Python **3.14+** is required, continuing the interpreter version used in Lab 03.
 Lab 04 provides an installable `findex` CLI; the earlier `python -m` commands
@@ -13,6 +20,9 @@ Lab 05 adds local serial, threaded, and process-based index construction.
 Lab 06 adds an async crawler whose JSONL output feeds the same indexer.
 Lab 07 adds a search API and browser UI, deployed on Render Free with an
 original eight-document demonstration corpus.
+Lab 08 profiles the hot path, adds NumPy ranking, and introduces optional
+chunk-based semantic and RRF hybrid search. Semantic mode needs an embedding
+model and generated embedding files; the default installation remains keyword-only.
 
 ```bash
 uv sync --locked --dev
@@ -30,6 +40,38 @@ Use double quotes around the whole query in PowerShell when convenient.
 ---
 
 ## Project Structure & Architecture
+
+```mermaid
+flowchart LR
+    Corpus[Corpus · Lab 01] --> Crawler[Crawler · Lab 06]
+    Corpus --> Tokenizer[Tokenizer · Lab 01]
+    Crawler --> Tokenizer
+    Tokenizer --> Index[Index · Labs 02, 05]
+    Index --> Query[Boolean queries · Lab 03]
+    Query --> Rank[BM25 / NumPy · Labs 03, 08]
+    Index --> Embed[Chunk embeddings · Lab 08]
+    Embed --> Hybrid[Semantic / RRF · Lab 08]
+    Rank --> Hybrid
+    Hybrid --> API[FastAPI · Lab 07]
+    API --> UI[Browser UI · Lab 07]
+```
+
+### Measurements across the labs
+
+The detailed tables and their methods remain in their respective lab sections
+below; this index keeps the key results together without comparing unlike
+workloads as if they were one benchmark.
+
+| Lab | Measurement | Result |
+| --- | --- | --- |
+| 01 | Lazy vs eager, 500 documents | 7.12 MB vs 43.62 MB peak |
+| 02 | Plain postings vs `array('I')`, 5,000 documents | 42.8 MB vs 24.5 MB peak |
+| 03 | BM25 `python` precision@5 | 0.60 on the labeled corpus |
+| 04 | Strict typing and tests | 0 Pyright errors; historical 107-test milestone |
+| 05 | Free-threaded Python 3.13, 8 threads vs 1 | 2.05× build speedup on measured slice |
+| 06 | Crawler, 200 pages at concurrency 20 | 299.157 pages/s |
+| 07 | Render Free `/search`, concurrency 20 | p95 405.177 ms |
+| 08 | Warm 3-term ranking, 5,000-document index | 9.554 ms scalar → 2.116 ms NumPy (4.52×) |
 
 - `src/findex/tokenize.py` — Custom generator-based tokenizer that handles multilingual text, lowercasing, punctuation, and contractions cleanly.
 
@@ -49,6 +91,8 @@ Use double quotes around the whole query in PowerShell when convenient.
 
 - `src/findex/query.py` — recursive-descent parser and composable query tree.
 - `src/findex/ranking.py` — TF-IDF, BM25, timed search, caching, results, and snippets.
+- `src/findex/vectorized.py` — lazy `int32` posting arrays and vectorized scoring.
+- `src/findex/semantic.py` — optional passage embeddings, cosine search, and RRF fusion.
 - `src/findex/parallel.py` — disk-backed chunks, partial indexes, and ordered merge for three executors.
 - `src/findex/crawler/` — bounded async URL frontier, polite fetching, robots cache, and HTML extraction.
 - `src/findex/web/` — FastAPI routes, validated settings, Jinja templates, and static CSS.
@@ -783,3 +827,96 @@ Render Free may spin down after idle time, so warm the service before a
 deployed load test. The Free service is deployed from the `lab-07` branch;
 Render's deploy log reported a successful build and a live service. Its
 public `/health`, `/search`, `/docs`, and home page were checked directly.
+
+# Lab 08 — Profiling, NumPy ranking, and semantic retrieval
+
+**Local implementation and verification: successful.** All 213 tests pass;
+Ruff and strict Pyright pass; the source archive and wheel build, and the
+wheel passes an isolated CLI smoke test. Keyword, semantic, and hybrid search
+were exercised locally, including a real-model HTTP request.
+
+The [profiling report](docs/lab08-profiling.md) records cProfile, py-spy and
+Scalene findings **before** optimization, links to both flame graphs, and
+explains which hypotheses held. The measurements use the existing 5,000-page
+Wikipedia index, not the entire compressed dump. `pytest-benchmark` covers
+warm searches and `build_index` on a smaller fixture; full-corpus and cold
+JSON load/save costs are separate measurements.
+
+| Query | Matching docs | Scalar BM25 | NumPy BM25 | Speedup |
+| --- | ---: | ---: | ---: | ---: |
+| `the` | 3,666 | 3.368 ms | 0.827 ms | 4.07× |
+| `aaaacattle` | 1 | 0.122 ms | 0.142 ms | 0.86× |
+| `the AND of AND in` | 3,372 | 9.554 ms | 2.116 ms | 4.52× |
+
+These are median warm-query times from three batches of 100 searches per
+query. The NumPy path uses lazy `int32` arrays for document IDs, term
+frequencies, and document lengths; it preserves the scalar result order,
+including top-k ties. Small result sets use scalar scoring automatically,
+because array setup costs more than it saves for the rare term.
+
+Semantic search is an **optional local feature**. It splits stored document
+texts into overlapping 256-word passages, writes L2-normalized float32
+embeddings to `.npy` files, and ranks each document by its best passage.
+Hybrid mode combines keyword and semantic ranks by RRF, never by adding
+incompatible raw scores. Generate embeddings for the same index you search:
+
+```powershell
+uv sync --locked --dev --extra semantic
+uv run --locked --extra semantic findex embed data/index.json --model all-MiniLM-L6-v2
+uv run --locked --extra semantic findex search data/index.json "faster Python code" --mode semantic
+uv run --locked --extra semantic findex search data/index.json "faster Python code" --mode hybrid
+uv run --locked --extra semantic python scripts/evaluate_hybrid.py data/index.json
+```
+
+The API accepts `?mode=keyword|semantic|hybrid`; the search page offers the
+same modes. If embeddings are absent, semantic/hybrid API requests return
+HTTP 503 instead of silently falling back to keyword results. Locally,
+`all-MiniLM-L6-v2` encoded 22,305 passages from 5,000 documents in 9 min 07 s
+on CPU; the vector `.npy` file is 34.3 MB. The generated model and embeddings
+are ignored by Git and must be rebuilt or provisioned for deployment.
+
+### Semantic and hybrid precision@5
+
+The first ten relevance judgments are the original Lab 03 queries; the last
+five are manually labeled paraphrases of those topics. Most rows have only
+one judged relevant document, so their maximum possible P@5 is **0.20**;
+`python` has five. The table was produced with
+`scripts/evaluate_hybrid.py` on the same 5,000-document index, using
+normalized MiniLM vectors and RRF with rank constant 60.
+
+| Query | Relevant IDs | Keyword P@5 | Semantic P@5 | Hybrid P@5 |
+| --- | --- | ---: | ---: | ---: |
+| `"computer science"` | 71 | 0.20 | 0.20 | 0.20 |
+| `"artificial intelligence"` | 2621 | 0.20 | 0.20 | 0.20 |
+| `"machine learning"` | 2621 | 0.20 | 0.20 | 0.20 |
+| `"world war"` | 1514 | 0.20 | 0.00 | 0.20 |
+| `"data compression"` | 1318 | 0.20 | 0.20 | 0.20 |
+| `"search engine"` | 467 | 0.20 | 0.20 | 0.20 |
+| `"internet explorer"` | 1153 | 0.20 | 0.20 | 0.20 |
+| `"linear algebra"` | 286 | 0.20 | 0.20 | 0.20 |
+| `"computer program"` | 941 | 0.20 | 0.20 | 0.20 |
+| `python` | 1490, 1499, 1504, 2623, 3111 | 0.60 | 0.00 | 0.40 |
+| `study of computers and computation` | 71 | 0.20 | 0.20 | 0.20 |
+| `machines that mimic human thinking` | 2621 | 0.20 | 0.20 | 0.20 |
+| `algorithms that learn from data` | 2621 | 0.00 | 0.20 | 0.20 |
+| `global armed conflict` | 1514 | 0.00 | 0.20 | 0.00 |
+| `reducing file size without losing information` | 1318 | 0.00 | 0.20 | 0.20 |
+| **Mean** | | **0.187** | **0.173** | **0.200** |
+
+Semantic retrieval recovers two paraphrases that exact keyword search misses
+(`algorithms…`, `reducing file size…`), but it misses all five judged `python`
+documents in its top five. Hybrid improves the mean slightly over keyword,
+yet RRF pushes the relevant `global armed conflict` document outside the top
+five even though semantic alone finds it. That failure is a useful reminder
+that rank fusion needs tuning and more complete relevance judgments; this
+small judgment set does not establish a general quality win.
+
+Scope and next steps: the reported ranking speedup is for warm searches on
+the 5,000-document project index. JSON serialization dominates index build
+and cold search, and the first vectorization of a term adds setup time and
+memory. On Windows, the API process used about 554 MB RSS with MiniLM on the
+eight-document demo and 1,349 MB on the 5,000-document index. These are local
+measurements; Render Free provides 512 MB, making a lighter inference runtime
+or larger hosting plan appropriate for semantic deployment. The
+[showcase outline](docs/lab08-showcase.md) contains a recording script and
+five-minute presentation plan.

@@ -13,8 +13,11 @@ from dataclasses import dataclass, field
 from operator import itemgetter
 from typing import Protocol, overload
 
+import numpy as np
+
 from findex.index import Index, Posting
 from findex.query import Query, parse
+from findex.vectorized import score_matches, top_k
 
 log = logging.getLogger(__name__)
 
@@ -98,13 +101,23 @@ def _snippet(text: str, terms: set[str], width: int = 80) -> str:
 
 @overload
 def search(
-    query: str | Query, index: Index, scorer: Scorer | None = None, k: int = 10
+    query: str | Query,
+    index: Index,
+    scorer: Scorer | None = None,
+    k: int = 10,
+    *,
+    vectorized: bool | None = None,
 ) -> list[SearchResult]: ...
 
 
 @overload
 def search(
-    query: Index, index: str | Query, scorer: Scorer | None = None, k: int = 10
+    query: Index,
+    index: str | Query,
+    scorer: Scorer | None = None,
+    k: int = 10,
+    *,
+    vectorized: bool | None = None,
 ) -> list[SearchResult]: ...
 
 
@@ -114,6 +127,8 @@ def search(
     index: Index | str | Query,
     scorer: Scorer | None = None,
     k: int = 10,
+    *,
+    vectorized: bool | None = None,
 ) -> list[SearchResult]:
     if isinstance(query, Index):
         query, index = index, query
@@ -126,19 +141,44 @@ def search(
     # Cache immutable query trees, never matches from a mutable index.
     matched = node.evaluate(index)
     log.debug("query cache: %s", parse.cache_info())
-    scores: dict[int, float] = {doc_id: 0.0 for doc_id in matched}
-    for term in node.terms():
-        for posting in index.get_postings(term):
-            if posting.doc_id in scores:
-                scores[posting.doc_id] += scorer(term, posting, index)
-    top = heapq.nlargest(k, scores.items(), key=itemgetter(1))
-    terms = set(node.terms())
+    terms = node.terms()
+    use_numpy = (
+        vectorized is True or (vectorized is None and len(matched) >= 64)
+    ) and isinstance(scorer, (BM25, TfIdf))
+    top: list[tuple[int, float]] = []
+    if use_numpy:
+        try:
+            match_ids = np.fromiter(matched, dtype=np.int32, count=len(matched))
+            score_array = score_matches(
+                index,
+                match_ids,
+                terms,
+                bm25=isinstance(scorer, BM25),
+                k1=scorer.k1 if isinstance(scorer, BM25) else 1.5,
+                b=scorer.b if isinstance(scorer, BM25) else 0.75,
+            )
+            top = [
+                (int(match_ids[i]), float(score_array[i]))
+                for i in top_k(score_array, k)
+            ]
+        except OverflowError:
+            use_numpy = False
+    if not use_numpy:
+        scores: dict[int, float] = {doc_id: 0.0 for doc_id in matched}
+        for term in terms:
+            for posting in index.get_postings(term):
+                if posting.doc_id in scores:
+                    scores[posting.doc_id] += scorer(term, posting, index)
+        top = heapq.nlargest(k, scores.items(), key=itemgetter(1))
+    query_terms = set(terms)
     return [
         SearchResult(
             doc_id,
             score,
             index.doc_meta[doc_id].title or index.doc_meta[doc_id].path,
-            _snippet(index.doc_texts.get(doc_id, ""), terms) if index.doc_texts else "",
+            _snippet(index.doc_texts.get(doc_id, ""), query_terms)
+            if index.doc_texts
+            else "",
         )
         for doc_id, score in top
     ]

@@ -59,6 +59,7 @@ class Index(Mapping[str, list[Posting]]):
         if self.doc_meta and doc_id <= next(reversed(self.doc_meta)):
             raise ValueError("document ids must increase to keep postings sorted")
         self.__dict__.pop("avg_doc_length", None)
+        self.__dict__.pop("_vector_view", None)
         self.doc_meta[doc_id] = DocMeta(path=path, title=title)
         self.doc_lengths[doc_id] = len(tokens)
         if text is not None:
